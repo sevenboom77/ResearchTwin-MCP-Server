@@ -1,0 +1,25 @@
+{
+  "project_name": "Adaptive ResearchTwin Demonstrator",
+  "current_stage": "MCP Tool Development",
+  "completed_tasks": [
+    "Built a fictional RAG knowledge-base fixture",
+    "Documented Streamable HTTP and optional SSE integration",
+    "Created anonymized RNN-PPO and VPN-routing demo records"
+  ],
+  "pending_tasks": [
+    "Run the fictional end-to-end group-meeting demonstration",
+    "Repeat the fictional stability sweep with fixed seeds",
+    "Confirm held-out scenario evaluation criteria"
+  ],
+  "risks": [
+    "A VPN route can delay trusted-LAN requests during integration",
+    "Reduced loss variance alone does not establish generalization"
+  ],
+  "important_decisions": [
+    "Use Streamable HTTP at /mcp as the primary MCP transport",
+    "Keep SSE as an explicitly selected compatibility mode only",
+    "Keep RAG retrieval separate from MCP persistence"
+  ],
+  "created_at": "2026-08-17T08:00:00+00:00",
+  "updated_at": "2026-08-20T10:00:00+00:00"
+}

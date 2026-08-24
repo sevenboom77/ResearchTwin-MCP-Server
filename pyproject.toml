@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "researchtwin-mcp-server"
+version = "0.1.0"
+description = "Persistent MCP research-project management tools for ResearchTwin."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=2.0.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0.0,<10.0.0",
+]
+
+[project.scripts]
+researchtwin-mcp = "researchtwin_mcp.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra"
