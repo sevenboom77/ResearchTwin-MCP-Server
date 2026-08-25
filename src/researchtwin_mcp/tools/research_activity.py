@@ -4,8 +4,21 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from mcp.types import CallToolResult
+
+from researchtwin_mcp.models.contracts import (
+    ActivityLimit,
+    ActivityType,
+    IsoDate,
+    ListResearchActivitiesSuccess,
+    NonEmptyText,
+    RecordResearchActivitySuccess,
+    error_tool_result,
+    result_is_error,
+    success_tool_result,
+)
 from researchtwin_mcp.models.schemas import ACTIVITY_TYPES, new_uuid, utc_now_iso, validate_activity_type, validate_iso_date
 from researchtwin_mcp.storage.json_store import JsonStore
 from researchtwin_mcp.tools.common import ToolInputError, optional_string_list, optional_text, required_text, run_tool
@@ -123,17 +136,17 @@ def register_research_activity_tools(server: MCPServer, store: JsonStore) -> Non
         structured_output=True,
     )
     def record_activity_tool(
-        activity_type: str,
-        title: str,
-        description: str,
-        date: str | None = None,
-        result: str | None = None,
-        problem: str | None = None,
-        next_step: str | None = None,
-        tags: list[str] | None = None,
-        source: str | None = None,
-    ) -> dict[str, Any]:
-        return record_research_activity(
+        activity_type: ActivityType,
+        title: NonEmptyText,
+        description: NonEmptyText,
+        date: IsoDate | None = None,
+        result: NonEmptyText | None = None,
+        problem: NonEmptyText | None = None,
+        next_step: NonEmptyText | None = None,
+        tags: list[NonEmptyText] | None = None,
+        source: NonEmptyText | None = None,
+    ) -> Annotated[CallToolResult, RecordResearchActivitySuccess]:
+        payload = record_research_activity(
             store,
             date=date,
             activity_type=activity_type,
@@ -145,6 +158,9 @@ def register_research_activity_tools(server: MCPServer, store: JsonStore) -> Non
             tags=tags,
             source=source,
         )
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(RecordResearchActivitySuccess.model_validate(payload))
 
     @server.tool(
         name="list_research_activities",
@@ -156,13 +172,13 @@ def register_research_activity_tools(server: MCPServer, store: JsonStore) -> Non
         structured_output=True,
     )
     def list_activities_tool(
-        start_date: str | None = None,
-        end_date: str | None = None,
-        activity_type: str | None = None,
-        tag: str | None = None,
-        limit: int = DEFAULT_ACTIVITY_LIMIT,
-    ) -> dict[str, Any]:
-        return list_research_activities(
+        start_date: IsoDate | None = None,
+        end_date: IsoDate | None = None,
+        activity_type: ActivityType | None = None,
+        tag: NonEmptyText | None = None,
+        limit: ActivityLimit = DEFAULT_ACTIVITY_LIMIT,
+    ) -> Annotated[CallToolResult, ListResearchActivitiesSuccess]:
+        payload = list_research_activities(
             store,
             start_date=start_date,
             end_date=end_date,
@@ -170,6 +186,9 @@ def register_research_activity_tools(server: MCPServer, store: JsonStore) -> Non
             tag=tag,
             limit=limit,
         )
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(ListResearchActivitiesSuccess.model_validate(payload))
 
 
 def _normalise_date(value: str | None, field_name: str, *, default_today: bool = False) -> str:

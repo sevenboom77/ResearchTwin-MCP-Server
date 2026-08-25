@@ -4,13 +4,16 @@ This guide connects ResearchTwin MCP Server to an OpenTrek ResearchTwin Agent on
 
 The primary integration is **Streamable HTTP**. Do not guess or hand-write an OpenTrek transportType JSON value. Use the OpenTrek registration UI to select the transport it labels STREAMABLE, then enter the matching URL.
 
+For the non-expert, click-by-click registration workflow, see [OpenTrek registration](open_trek_registration.md). Preparing an endpoint does not prove that OpenTrek is connected: only UI discovery and an actual tool call do that.
+
 ## 1. Start the server
 
 Open PowerShell at the repository root and activate the virtual environment:
 
 ~~~powershell
-Set-Location C:\work\OpenTrek\ResearchTwin-MCP-Server
+Set-Location C:\work\ResearchTwin-MCP-Server
 .\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe .\scripts\show_connection_info.py
 .\scripts\start_server.ps1 -Transport streamable-http
 ~~~
 
@@ -65,8 +68,9 @@ In OpenTrek, open **工具箱 → 注册 MCP 服务** (Toolbox → Register MCP 
 
 | OpenTrek field | Value |
 | --- | --- |
-| Name | researchtwin |
-| URL | http://LAN_IPV4:8000/mcp |
+| Name | ResearchTwin-MCP |
+| Description | Provides persistent research activity, advisor instruction, project status, and research report tools for the ResearchTwin agent. |
+| URL | http://<LAN_IPV4>:8000/mcp |
 | Transport | Select **STREAMABLE** in the UI |
 | Timeout | 60 seconds, if the UI provides a timeout field |
 | Enabled | Enabled |
@@ -81,6 +85,8 @@ Save the entry, then use OpenTrek's tool discovery or test feature. It should ex
 6. generate_research_report
 
 If the OpenTrek UI produces or exports JSON, let the UI generate its actual transport field. This project intentionally does not publish a guessed transportType string.
+
+Do not call the integration successful merely because the form was saved. It is successful only after OpenTrek discovers these tools and completes at least one real tool call.
 
 ### Same-machine connection
 
@@ -123,10 +129,10 @@ Use evidence from the lowest layer upward instead of assuming a browser response
 From the repository root, run:
 
 ~~~powershell
-python scripts\smoke_test.py
+.\.venv\Scripts\python.exe .\scripts\smoke_test.py
 ~~~
 
-The smoke test starts an isolated Streamable HTTP process, discovers all six tools through an official MCP client, writes an activity, and reads it back. It does not use runtime_data/.
+The smoke test starts an isolated Streamable HTTP process, discovers exactly six tools through an official MCP client, calls all six, verifies persistence and report generation, and checks representative MCP `isError` failures. It does not use `runtime_data/`.
 
 ### B. Verify the server is listening
 
@@ -157,11 +163,12 @@ An earlier integration symptom was that a knowledge-base tool request remained P
 
 When an OpenTrek request remains Pending for an unusually long time during campus-network integration, check in this order:
 
-1. Confirm the server process is still listening on the expected port.
-2. Confirm both machines are on the intended LAN and are using the correct IPv4 address.
-3. Run Test-NetConnection from the client-side device.
-4. Inspect VPN state, routing, split-tunnel policy, and whether the VPN blocks local-LAN access.
-5. Inspect Windows Firewall only after the previous checks isolate inbound filtering as a plausible cause.
+1. Confirm the server process is still listening on the expected port (8000 by default).
+2. Run the local MCP smoke test or a local OpenTrek connection test first.
+3. Identify the active Ethernet or Wi-Fi LAN IPv4 address; `show_connection_info.py` prints `UNKNOWN` rather than guessing when it is ambiguous.
+4. Inspect VPN state and split-tunnel policy, including whether the VPN blocks local-LAN access.
+5. Inspect system routing with `route print` or `Get-NetRoute -AddressFamily IPv4`.
+6. Inspect Windows Firewall only after the previous checks isolate inbound filtering as a plausible cause.
 
 Do **not** automatically disable a VPN. If organizational policy permits a manual comparison test, the user may disconnect it temporarily, run the same connection test, record the result, and reconnect it. If a VPN must remain active, consult the relevant network policy or administrator about local-LAN access and routing.
 

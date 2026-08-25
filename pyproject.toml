@@ -9,7 +9,8 @@ description = "Persistent MCP research-project management tools for ResearchTwin
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=2.0.0,<3.0.0",
+  "mcp==2.1.0",
+  "python-dotenv>=1.0.0,<2.0.0",
 ]
 
 [project.optional-dependencies]

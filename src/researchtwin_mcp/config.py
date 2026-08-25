@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from dotenv import load_dotenv
+
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
@@ -34,10 +36,21 @@ class Settings:
         environ: Mapping[str, str] | None = None,
         project_root: Path | None = None,
     ) -> "Settings":
-        """Build settings without embedding network or user-specific values."""
+        """Build settings without embedding network or user-specific values.
 
-        values = os.environ if environ is None else environ
+        When no explicit mapping is supplied, a repository-local ``.env`` file
+        is loaded first with ``override=False``. Real process environment
+        variables therefore always take precedence over local convenience
+        settings. Tests and callers that pass ``environ`` remain side-effect
+        free and never read a ``.env`` file.
+        """
+
         root = (project_root or Path(__file__).resolve().parents[2]).resolve()
+        if environ is None:
+            load_dotenv(dotenv_path=root / ".env", override=False)
+            values: Mapping[str, str] = os.environ
+        else:
+            values = environ
 
         host = values.get("RESEARCHTWIN_HOST", DEFAULT_HOST).strip()
         if not host:

@@ -81,6 +81,7 @@ ResearchTwin-MCP-Server/
 │   └── tools/                        # Activity, status, advisor, and report tools
 ├── scripts/
 │   ├── start_server.ps1
+│   ├── show_connection_info.py       # Read-only local/LAN URL helper
 │   └── smoke_test.py
 ├── tests/
 ├── docs/
@@ -99,7 +100,7 @@ ResearchTwin-MCP-Server/
 From a new Windows PowerShell session:
 
 ~~~powershell
-Set-Location C:\work\OpenTrek\ResearchTwin-MCP-Server
+Set-Location C:\work\ResearchTwin-MCP-Server
 python --version
 where.exe python
 
@@ -125,7 +126,13 @@ The server reads these environment variables from the process environment:
 | RESEARCHTWIN_DATA_DIR | runtime_data | Local persistence directory, resolved relative to the repository root when relative. |
 | RESEARCHTWIN_LOG_LEVEL | INFO | Python log level. |
 
-.env.example is a reference/template only; the server does not automatically load a .env file. Set values in the PowerShell session, or use an external environment loader if your deployment already has one:
+Copy `.env.example` to `.env` if you want local configuration that survives a new PowerShell session. `.env` is ignored by Git and is loaded from the repository root when the server starts. Existing process or system environment variables always take precedence over values in `.env`.
+
+~~~powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+~~~
+
+For a one-off override, set values in the PowerShell session instead:
 
 ~~~powershell
 $env:RESEARCHTWIN_HOST = "0.0.0.0"
@@ -134,7 +141,7 @@ $env:RESEARCHTWIN_DATA_DIR = "runtime_data"
 $env:RESEARCHTWIN_LOG_LEVEL = "INFO"
 ~~~
 
-Do not put keys, personal identifiers, or a user-specific IP address in source code or committed configuration.
+Do not put keys, personal identifiers, or a user-specific IP address in source code or committed configuration. Treat `.env` as local operational configuration, not a secret-management system.
 
 ## Run
 
@@ -153,10 +160,20 @@ http://<LAN_IPV4>:8000/mcp
 For the local machine only, substitute 127.0.0.1 for <LAN_IPV4>. For OpenTrek on another trusted LAN device, use the Windows host's applicable IPv4 address. The helper script is also available:
 
 ~~~powershell
+.\.venv\Scripts\python.exe .\scripts\show_connection_info.py
 .\scripts\start_server.ps1
 ~~~
 
+`show_connection_info.py` only reads local configuration and network information. When it cannot unambiguously identify a LAN IPv4 address, it prints `UNKNOWN`; use `ipconfig` to choose the active Ethernet or Wi-Fi IPv4 address rather than guessing.
+
 Streamable HTTP is the normal mode. For explicit SSE compatibility, run python server.py --transport sse and register the resulting /sse endpoint as documented in [OpenTrek integration guidance](docs/open_trek_integration.md). SSE is a separately selected transport mode, not an alternative URL to register alongside /mcp.
+
+### Demo network safety
+
+- Use `127.0.0.1` for local-only testing.
+- The default `0.0.0.0` bind is only for a trusted LAN or campus-network demonstration.
+- Do not expose this unauthenticated development server through public port forwarding.
+- Before any public or broader deployment, add HTTPS, authentication, authorization, a reverse proxy, and appropriate network controls.
 
 ## Test
 
@@ -169,10 +186,10 @@ pytest -v
 Run the local MCP Streamable HTTP smoke test after dependencies are installed:
 
 ~~~powershell
-python scripts\smoke_test.py
+.\.venv\Scripts\python.exe .\scripts\smoke_test.py
 ~~~
 
-The smoke test verifies actual protocol connectivity, tool discovery, and an activity record/list round trip. It uses isolated temporary data rather than your runtime_data/ directory.
+The smoke test starts an isolated Streamable HTTP server and uses the official MCP client to discover exactly six tools, call all six successfully, verify persistence and report generation, and check representative `isError` failures. It uses temporary data rather than your `runtime_data/` directory.
 
 ## OpenTrek Integration
 
@@ -182,7 +199,7 @@ OpenTrek registration should use the UI's STREAMABLE choice and this URL shape:
 http://<LAN_IPV4>:8000/mcp
 ~~~
 
-Do not hand-invent a transportType JSON value. Select STREAMABLE on the OpenTrek MCP registration page, enter the URL, save, and verify that all six tools are discovered. See [docs/open_trek_integration.md](docs/open_trek_integration.md) for LAN IPv4 discovery, SSE compatibility, VPN checks, and a safe firewall troubleshooting process.
+Do not hand-invent a transportType JSON value. Select STREAMABLE on the OpenTrek MCP registration page, enter the URL, save, and verify that all six tools are discovered. See [the step-by-step registration guide](docs/open_trek_registration.md) and [OpenTrek integration guidance](docs/open_trek_integration.md) for LAN IPv4 discovery, SSE compatibility, VPN checks, and a safe firewall troubleshooting process.
 
 ## Demo Scenario
 
@@ -221,6 +238,7 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 
 - [Architecture](docs/architecture.md)
 - [MCP tool reference](docs/mcp_tools.md)
+- [OpenTrek registration](docs/open_trek_registration.md)
 - [OpenTrek integration](docs/open_trek_integration.md)
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)

@@ -42,7 +42,7 @@ sequenceDiagram
 2. Start the primary Streamable HTTP server:
 
 ~~~powershell
-Set-Location C:\work\OpenTrek\ResearchTwin-MCP-Server
+Set-Location C:\work\ResearchTwin-MCP-Server
 .\.venv\Scripts\Activate.ps1
 .\scripts\start_server.ps1 -Transport streamable-http
 ~~~

@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Any
 
+from mcp.types import CallToolResult
+
+from researchtwin_mcp.models.contracts import (
+    GenerateResearchReportSuccess,
+    IsoDate,
+    NonEmptyText,
+    ReportType,
+    error_tool_result,
+    result_is_error,
+    success_tool_result,
+)
 from researchtwin_mcp.models.schemas import REPORT_TYPES, new_uuid, utc_now_iso, validate_iso_date, validate_report_type
 from researchtwin_mcp.storage.json_store import JsonStore
 from researchtwin_mcp.tools.advisor_instruction import load_advisor_instructions
@@ -43,7 +55,11 @@ def generate_research_report(
             if _activity_in_range(record, start, end)
         ]
         activities.sort(key=lambda item: (str(item.get("date", "")), str(item.get("created_at", ""))))
-        instructions = load_advisor_instructions(store)
+        instructions = [
+            instruction
+            for instruction in load_advisor_instructions(store)
+            if _instruction_in_range(instruction, start, end)
+        ]
 
         report = _render_report(
             project_name=selected_name,
@@ -78,28 +94,51 @@ def register_research_report_tool(server: MCPServer, store: JsonStore) -> None:
         description=(
             "Generate a weekly, meeting, or stage research report from persisted research activities, "
             "advisor instructions, and project status. The Markdown report is returned and safely saved "
-            "under runtime_data/reports. report_type must be one of: " + ", ".join(sorted(REPORT_TYPES)) + "."
+            "under the configured local data directory. report_type must be one of: "
+            + ", ".join(sorted(REPORT_TYPES))
+            + "."
         ),
         structured_output=True,
     )
     def generate_report_tool(
-        start_date: str,
-        end_date: str,
-        report_type: str,
-        project_name: str | None = None,
-    ) -> dict[str, Any]:
-        return generate_research_report(
+        start_date: IsoDate,
+        end_date: IsoDate,
+        report_type: ReportType,
+        project_name: NonEmptyText | None = None,
+    ) -> Annotated[CallToolResult, GenerateResearchReportSuccess]:
+        payload = generate_research_report(
             store,
             start_date=start_date,
             end_date=end_date,
             report_type=report_type,
             project_name=project_name,
         )
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(GenerateResearchReportSuccess.model_validate(payload))
 
 
 def _activity_in_range(record: dict[str, Any], start_date: str, end_date: str) -> bool:
     record_date = record.get("date")
     return isinstance(record_date, str) and start_date <= record_date <= end_date
+
+
+def _instruction_in_range(instruction: dict[str, Any], start_date: str, end_date: str) -> bool:
+    """Include advisor instructions whose recording date lies in the report period.
+
+    Advisor records have no separate effective-date field.  ``created_at`` is
+    therefore the auditable temporal basis for report inclusion; malformed
+    historical records are safely omitted rather than widening the report.
+    """
+
+    created_at = instruction.get("created_at")
+    if not isinstance(created_at, str):
+        return False
+    try:
+        created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        return False
+    return start_date <= created_date <= end_date
 
 
 def _render_report(
@@ -170,7 +209,7 @@ def _render_report(
         "",
         "## 6. Advisor Requirements and Items to Confirm",
         "",
-        *_bullets(advisor_items, "No advisor instructions are currently persisted."),
+        *_bullets(advisor_items, "No advisor instructions were recorded during this period."),
         "",
         "## 7. Important Project Decisions",
         "",

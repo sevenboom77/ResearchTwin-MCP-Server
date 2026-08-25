@@ -6,6 +6,7 @@ import argparse
 import logging
 
 from mcp.server import MCPServer
+from pydantic import ConfigDict
 
 from researchtwin_mcp import __version__
 from researchtwin_mcp.config import ConfigurationError, Settings
@@ -55,7 +56,36 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     register_project_status_tools(server, store)
     register_advisor_instruction_tools(server, store)
     register_research_report_tool(server, store)
+    _forbid_unknown_tool_arguments(server)
     return server
+
+
+def _forbid_unknown_tool_arguments(server: MCPServer) -> None:
+    """Publish and enforce ``additionalProperties: false`` for all six tools.
+
+    MCP SDK 2.1.0's public high-level decorator has no ``extra=`` option for
+    its dynamically generated Pydantic argument models.  We therefore apply a
+    narrow, version-pinned compatibility adjustment to each registered model,
+    rather than changing the flat MCP argument shape or globally mutating SDK
+    configuration.  The exact SDK version is pinned in project dependencies and
+    covered by protocol-level tests.
+    """
+
+    try:
+        tools = server._tool_manager.list_tools()  # pyright: ignore[reportPrivateUsage]
+    except AttributeError as exc:  # pragma: no cover - protects an SDK upgrade path
+        raise RuntimeError(
+            "MCP SDK no longer exposes the tool metadata required to enforce strict arguments. "
+            "Update the compatibility shim before upgrading mcp."
+        ) from exc
+
+    for tool in tools:
+        argument_model = tool.fn_metadata.arg_model
+        config = dict(argument_model.model_config)
+        config["extra"] = "forbid"
+        argument_model.model_config = ConfigDict(**config)
+        argument_model.model_rebuild(force=True)
+        tool.parameters = argument_model.model_json_schema(by_alias=True)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

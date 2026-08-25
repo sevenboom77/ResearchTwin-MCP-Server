@@ -139,11 +139,11 @@ or:
 }
 ~~~
 
-Detailed tracebacks belong in server logs for diagnosis, not in the final tool response.
+Successful MCP calls carry typed structured content that conforms to the tool's published success output schema. A handled business failure carries the safe error JSON as text content and sets `CallToolResult.isError` to `true`; it intentionally does not claim to satisfy the success output schema. Detailed tracebacks belong in server logs for diagnosis, not in the final tool response.
 
 ## Reporting flow
 
-generate_research_report reads the persisted research logs, current status, and advisor instructions. It writes and returns a Markdown document with these stable sections:
+generate_research_report reads the persisted research logs, current status, and advisor instructions. Activities are selected by their inclusive report-date window. Advisor instructions are selected only when the date in each record's `created_at` timestamp falls within that same inclusive window; records with a missing or malformed timestamp are omitted. The current project-status snapshot is retained in full as current context, even when it was last updated outside the report window. The tool writes and returns a Markdown document with these stable sections:
 
 1. Stage goals
 2. Completed work
@@ -167,7 +167,7 @@ All runtime settings come from RESEARCHTWIN_* environment variables:
 
 The server logs startup, tool invocation, storage reads and writes, and errors. Logs should use record IDs and operational metadata rather than full advisor messages, raw research material, or other sensitive text.
 
-.env.example documents the variables, but the runtime reads process environment variables; it does not automatically import a .env file.
+The runtime loads a repository-root `.env` file when present, without overriding existing process environment variables. `.env.example` documents the supported variables; `.env` is local operational configuration and is excluded from Git.
 
 ## Security and privacy boundary
 

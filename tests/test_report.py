@@ -24,6 +24,19 @@ _REQUIRED_HEADINGS = (
 )
 
 
+def _set_instruction_created_at(store: JsonStore, created_at: str) -> None:
+    """Make fixture instruction timing deterministic for report-period tests."""
+
+    payload = store.read_json("advisor_instructions.json", {"instructions": []})
+    assert isinstance(payload, dict)
+    instructions = payload.get("instructions")
+    assert isinstance(instructions, list) and instructions
+    assert isinstance(instructions[-1], dict)
+    instructions[-1]["created_at"] = created_at
+    instructions[-1]["updated_at"] = created_at
+    store.write_json("advisor_instructions.json", payload)
+
+
 def test_report_uses_persisted_data_and_saves_markdown(tmp_path: Path) -> None:
     """The report renders real persisted inputs and saves the returned Markdown under reports/."""
 
@@ -70,6 +83,7 @@ def test_report_uses_persisted_data_and_saves_markdown(tmp_path: Path) -> None:
         priority="high",
         deadline="2026-04-09",
     )
+    _set_instruction_created_at(store, "2026-04-04T09:00:00+00:00")
 
     result = generate_research_report(
         JsonStore(data_dir),
@@ -109,3 +123,34 @@ def test_empty_report_is_saved_and_does_not_crash(tmp_path: Path) -> None:
     assert all(heading in result["report"] for heading in _REQUIRED_HEADINGS)
     assert "No research activities were recorded for this period." in result["report"]
     assert (data_dir / result["report_path"]).read_text(encoding="utf-8") == result["report"]
+
+
+def test_report_filters_advisor_instructions_by_recording_date(tmp_path: Path) -> None:
+    """Only advisor records created in the inclusive report period are rendered."""
+
+    store = JsonStore(tmp_path / "runtime_data")
+    record_advisor_instruction(
+        store,
+        instruction="Discuss in-range experiment results.",
+        task="Prepare in-range evidence",
+        priority="high",
+    )
+    _set_instruction_created_at(store, "2026-06-03T09:00:00+00:00")
+    record_advisor_instruction(
+        store,
+        instruction="This later instruction must not appear.",
+        task="Prepare later evidence",
+        priority="medium",
+    )
+    _set_instruction_created_at(store, "2026-06-09T09:00:00+00:00")
+
+    result = generate_research_report(
+        store,
+        start_date="2026-06-01",
+        end_date="2026-06-07",
+        report_type="weekly",
+    )
+
+    assert result["status"] == "success"
+    assert "Prepare in-range evidence" in result["report"]
+    assert "Prepare later evidence" not in result["report"]

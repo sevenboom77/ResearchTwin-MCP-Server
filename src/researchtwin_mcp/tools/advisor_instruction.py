@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from mcp.types import CallToolResult
+
+from researchtwin_mcp.models.contracts import (
+    IsoDate,
+    NonEmptyText,
+    Priority,
+    RecordAdvisorInstructionSuccess,
+    error_tool_result,
+    result_is_error,
+    success_tool_result,
+)
 from researchtwin_mcp.models.schemas import PRIORITIES, new_uuid, utc_now_iso, validate_iso_date, validate_priority
 from researchtwin_mcp.storage.json_store import JsonStore
 from researchtwin_mcp.tools.common import optional_string_list, optional_text, required_text, run_tool
@@ -78,15 +89,15 @@ def register_advisor_instruction_tools(server: MCPServer, store: JsonStore) -> N
         structured_output=True,
     )
     def record_instruction_tool(
-        instruction: str,
-        task: str,
-        priority: str,
-        deadline: str | None = None,
-        constraints: list[str] | None = None,
-        follow_up: str | None = None,
-        source_note: str | None = None,
-    ) -> dict[str, Any]:
-        return record_advisor_instruction(
+        instruction: NonEmptyText,
+        task: NonEmptyText,
+        priority: Priority,
+        deadline: IsoDate | None = None,
+        constraints: list[NonEmptyText] | None = None,
+        follow_up: NonEmptyText | None = None,
+        source_note: NonEmptyText | None = None,
+    ) -> Annotated[CallToolResult, RecordAdvisorInstructionSuccess]:
+        payload = record_advisor_instruction(
             store,
             instruction=instruction,
             task=task,
@@ -96,6 +107,9 @@ def register_advisor_instruction_tools(server: MCPServer, store: JsonStore) -> N
             follow_up=follow_up,
             source_note=source_note,
         )
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(RecordAdvisorInstructionSuccess.model_validate(payload))
 
 
 def _clean_instructions(payload: Any) -> list[dict[str, Any]]:

@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from mcp.types import CallToolResult
+
+from researchtwin_mcp.models.contracts import (
+    GetProjectStatusSuccess,
+    MergeMode,
+    NonEmptyText,
+    UpdateProjectStatusSuccess,
+    error_tool_result,
+    result_is_error,
+    success_tool_result,
+)
 from researchtwin_mcp.models.schemas import MERGE_MODES, utc_now_iso, validate_merge_mode
 from researchtwin_mcp.storage.json_store import JsonStore
 from researchtwin_mcp.tools.common import merge_unique, optional_string_list, required_text, run_tool
@@ -104,15 +115,15 @@ def register_project_status_tools(server: MCPServer, store: JsonStore) -> None:
         structured_output=True,
     )
     def update_status_tool(
-        project_name: str,
-        current_stage: str,
-        completed_tasks: list[str] | None = None,
-        pending_tasks: list[str] | None = None,
-        risks: list[str] | None = None,
-        important_decisions: list[str] | None = None,
-        merge_mode: str = "merge",
-    ) -> dict[str, Any]:
-        return update_project_status(
+        project_name: NonEmptyText,
+        current_stage: NonEmptyText,
+        completed_tasks: list[NonEmptyText] | None = None,
+        pending_tasks: list[NonEmptyText] | None = None,
+        risks: list[NonEmptyText] | None = None,
+        important_decisions: list[NonEmptyText] | None = None,
+        merge_mode: MergeMode = "merge",
+    ) -> Annotated[CallToolResult, UpdateProjectStatusSuccess]:
+        payload = update_project_status(
             store,
             project_name=project_name,
             current_stage=current_stage,
@@ -122,6 +133,9 @@ def register_project_status_tools(server: MCPServer, store: JsonStore) -> None:
             important_decisions=important_decisions,
             merge_mode=merge_mode,
         )
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(UpdateProjectStatusSuccess.model_validate(payload))
 
     @server.tool(
         name="get_project_status",
@@ -132,8 +146,11 @@ def register_project_status_tools(server: MCPServer, store: JsonStore) -> None:
         ),
         structured_output=True,
     )
-    def get_status_tool() -> dict[str, Any]:
-        return get_project_status(store)
+    def get_status_tool() -> Annotated[CallToolResult, GetProjectStatusSuccess]:
+        payload = get_project_status(store)
+        if result_is_error(payload):
+            return error_tool_result(payload)
+        return success_tool_result(GetProjectStatusSuccess.model_validate(payload))
 
 
 def _normalise_status(payload: Any) -> dict[str, Any]:
