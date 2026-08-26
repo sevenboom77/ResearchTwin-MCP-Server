@@ -2,6 +2,12 @@
 
 This guide prepares a ResearchTwin MCP Server for OpenTrek on the same machine or a trusted campus/LAN network. It does not claim that a connection already exists. End-to-end integration is confirmed only after the OpenTrek UI discovers tools and successfully calls one.
 
+> Scope: this guide covers HTTP Streamable and optional SSE registration only.
+> BaiLian-hosted uvx uses the separate stdio console entry point and does not
+> receive an /mcp URL; see [PyPI and BaiLian uvx preparation](pypi_release.md).
+> A browser open on this computer does not prove that a platform backend MCP
+> request originates on this computer.
+
 ## 1. Start the MCP server
 
 Open PowerShell in the actual project directory:

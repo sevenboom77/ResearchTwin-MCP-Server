@@ -49,6 +49,7 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries, persi
 - Official Python MCP SDK integration.
 - Streamable HTTP as the primary MCP transport at /mcp.
 - Optional command-line SSE compatibility transport, when selected at startup.
+- Dedicated stdio console entry point for uvx-hosted MCP clients.
 - Six focused tools instead of a monolithic server script.
 - UTF-8 JSON persistence with atomic replacement and in-process locking.
 - UUID record identifiers and timezone-aware ISO 8601 timestamps.
@@ -77,6 +78,7 @@ ResearchTwin-MCP-Server/
 ├── src/researchtwin_mcp/
 │   ├── config.py                     # RESEARCHTWIN_* settings validation
 │   ├── server.py                     # MCP server and transport startup
+│   ├── stdio_entry.py                # Dedicated uvx/stdin-stdout MCP entry
 │   ├── models/                       # Validation helpers and schemas
 │   ├── storage/                      # Shared JSON persistence layer
 │   └── tools/                        # Activity, status, advisor, and report tools
@@ -84,7 +86,9 @@ ResearchTwin-MCP-Server/
 │   ├── start_server.ps1
 │   ├── show_connection_info.py       # Read-only local/LAN URL helper
 │   ├── smoke_test.py
-│   └── deployment_check.py           # Read-only deployment preflight/probe
+│   ├── deployment_check.py           # Read-only deployment preflight/probe
+│   ├── stdio_smoke_test.py            # Official Client stdio protocol smoke
+│   └── wheel_stdio_smoke_test.py      # Non-editable wheel stdio validation
 ├── deploy/                           # systemd and Nginx deployment examples
 ├── tests/
 ├── docs/
@@ -151,6 +155,11 @@ and publish the container port only to host loopback when Nginx is the public
 entry point. The supplied Dockerfile already has safe container defaults for
 that pattern.
 
+For a BaiLian-hosted stdio/uvx trial, set RESEARCHTWIN_DATA_DIR explicitly.
+The FC example path /tmp/researchtwin-data is EPHEMERAL / DEMO ONLY: it may be
+lost on instance recycling and is not long-term ResearchTwin Memory. See
+[PyPI and BaiLian uvx preparation](docs/pypi_release.md).
+
 ## Run
 
 With the virtual environment active:
@@ -176,6 +185,15 @@ For the local machine only, substitute 127.0.0.1 for <LAN_IPV4>. For OpenTrek on
 
 Streamable HTTP is the normal mode. For explicit SSE compatibility, run python server.py --transport sse and register the resulting /sse endpoint as documented in [OpenTrek integration guidance](docs/open_trek_integration.md). SSE is a separately selected transport mode, not an alternative URL to register alongside /mcp.
 
+### Hosted stdio mode for BaiLian uvx
+
+The separate researchtwin-mcp-server console command runs the same six tools
+over MCP stdin/stdout. It does not start HTTP, Uvicorn, or a listener on port
+8000. The package is not published to PyPI at this time, and uvx is not yet
+locally verified, so do not configure BaiLian from this repository alone.
+Follow [the release-preparation guide](docs/pypi_release.md) after a project
+owner completes the manual PyPI release.
+
 ### Demo network safety
 
 - Use `127.0.0.1` for local-only testing.
@@ -198,6 +216,17 @@ Run the local MCP Streamable HTTP smoke test after dependencies are installed:
 ~~~
 
 The smoke test starts an isolated Streamable HTTP server and uses the official MCP client to discover exactly six tools, call all six successfully, verify persistence and report generation, and check representative `isError` failures. It uses temporary data rather than your `runtime_data/` directory.
+
+Run the dedicated stdio smoke test after installing the project:
+
+~~~powershell
+.\.venv\Scripts\python.exe .\scripts\stdio_smoke_test.py
+~~~
+
+It launches the dedicated console entry point through the official MCP stdio
+client, verifies initialization and exactly six tools, records and reads back
+temporary data, and checks an MCP isError response. It does not listen on port
+8000.
 
 ## OpenTrek Integration
 
@@ -262,5 +291,6 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 - [OpenTrek registration](docs/open_trek_registration.md)
 - [OpenTrek integration](docs/open_trek_integration.md)
 - [Linux deployment](docs/deployment_linux.md)
+- [PyPI and BaiLian uvx preparation](docs/pypi_release.md)
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)

@@ -3,6 +3,10 @@
 This directory contains editable examples, not a complete server-specific
 configuration:
 
+> Scope: these files are for Linux Streamable HTTP deployment. They do not
+> configure BaiLian FC/uvx stdio execution; see
+> [PyPI and BaiLian uvx preparation](../docs/pypi_release.md).
+
 - researchtwin-mcp.service.example runs the Streamable HTTP server under
   systemd and restarts it after an unexpected exit.
 - nginx-researchtwin-mcp.conf.example sends /mcp traffic to a server bound

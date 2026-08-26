@@ -5,6 +5,11 @@ OpenTrek can reach. It does not provision a server, buy cloud resources,
 create DNS records, change a cloud account, open a firewall, or register a
 service in OpenTrek.
 
+> Scope: these assets deploy the remote Streamable HTTP service. They are not
+> a BaiLian FC/uvx deployment guide, and their host data directory guarantees
+> do not apply to an FC temporary filesystem. See
+> [PyPI and BaiLian uvx preparation](pypi_release.md).
+
 The server continues to expose the existing Streamable HTTP endpoint:
 
 ~~~text

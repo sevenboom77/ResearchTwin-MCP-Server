@@ -2,6 +2,12 @@
 
 This guide connects ResearchTwin MCP Server to an OpenTrek ResearchTwin Agent on the same Windows machine or a trusted campus/LAN network.
 
+> Scope: this guide covers HTTP Streamable and optional SSE registration only.
+> BaiLian-hosted uvx uses the separate stdio console entry point and does not
+> receive an /mcp URL; see [PyPI and BaiLian uvx preparation](pypi_release.md).
+> A browser open on this computer does not prove that a platform backend MCP
+> request originates on this computer.
+
 The primary integration is **Streamable HTTP**. Do not guess or hand-write an OpenTrek transportType JSON value. Use the OpenTrek registration UI to select the transport it labels STREAMABLE, then enter the matching URL.
 
 For the non-expert, click-by-click registration workflow, see [OpenTrek registration](open_trek_registration.md). Preparing an endpoint does not prove that OpenTrek is connected: only UI discovery and an actual tool call do that.

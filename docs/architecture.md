@@ -78,6 +78,22 @@ message endpoint:  /messages/
 
 Only select the matching transport in the client. The two transports are alternatives; the default integration path is Streamable HTTP. See [OpenTrek integration](open_trek_integration.md) for safe registration and network troubleshooting.
 
+The third, independent transport is stdio for a host that launches the
+researchtwin-mcp-server console command, such as a future BaiLian uvx
+deployment:
+
+~~~text
+process: researchtwin-mcp-server
+wire:    stdin/stdout MCP JSON-RPC
+port:    none
+logs:    stderr only
+~~~
+
+It registers the same six tools through the same create_server() function. It
+does not start Uvicorn, does not bind port 8000, and does not replace the
+Streamable HTTP or SSE modes. See [PyPI and BaiLian uvx preparation](pypi_release.md)
+for release and FC constraints.
+
 ## Tool modules
 
 The MCP surface has six small, purpose-specific operations:
@@ -109,6 +125,16 @@ New activity and advisor-instruction records have UUIDs plus created_at and upda
 The store initializes missing directories and expected empty structures. Writes are performed through a temporary file and atomic replacement, while an in-process lock protects concurrent tool calls within the server process. A malformed individual record is treated defensively so it does not take down the entire service.
 
 JSON files are the first-version persistence choice because they are transparent, portable, and easy to demonstrate. They are not a substitute for a multi-user database, cross-process locking strategy, access control, backup policy, or audit system in a production deployment.
+
+### FC temporary-storage boundary
+
+If a BaiLian FC stdio trial sets
+RESEARCHTWIN_DATA_DIR=/tmp/researchtwin-data, that path is EPHEMERAL / DEMO
+ONLY. An instance recycle can remove all JSON records and reports, and separate
+instances do not share the directory. Such a trial validates Tool Discovery and
+Function Calling only; it does not complete long-term Memory or durable
+research-process management. NAS, OSS, a database, or another approved
+persistent backend requires a separate future design phase.
 
 ## Validation and error contract
 
