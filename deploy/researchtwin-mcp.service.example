@@ -1,0 +1,28 @@
+# Copy to /etc/systemd/system/researchtwin-mcp.service after adjusting paths
+# and ensuring that the User, Group, venv, and EnvironmentFile exist.
+#
+# Keep RESEARCHTWIN_HOST, RESEARCHTWIN_PORT, RESEARCHTWIN_DATA_DIR, and
+# RESEARCHTWIN_LOG_LEVEL in the EnvironmentFile, not in this unit.
+
+[Unit]
+Description=ResearchTwin MCP Streamable HTTP Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=researchtwin
+Group=researchtwin
+WorkingDirectory=/opt/researchtwin-mcp
+EnvironmentFile=/etc/researchtwin-mcp/researchtwin-mcp.env
+ExecStart=/opt/researchtwin-mcp/.venv/bin/python /opt/researchtwin-mcp/server.py --transport streamable-http
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

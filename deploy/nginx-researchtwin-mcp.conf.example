@@ -1,0 +1,30 @@
+# Example for an internal or campus-network Nginx virtual host.
+#
+# Replace the "_" server name with the approved host or domain before enabling
+# the site. For public use, create a separate TLS-enabled 443 server block
+# through the organization's certificate-management process and keep the same
+# location block below. Do not expose the Python process directly on port 8000.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    location = /mcp {
+        proxy_pass http://127.0.0.1:8000/mcp;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # MCP Streamable HTTP can produce either JSON or an SSE response.
+        # The installed MCP SDK emits X-Accel-Buffering: no for streamed
+        # responses and sends keepalives; disable proxy buffering explicitly
+        # so Nginx does not delay those events.
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

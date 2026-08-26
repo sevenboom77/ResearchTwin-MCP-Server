@@ -20,6 +20,7 @@ from mcp.types import CallToolResult, TextContent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEPLOYMENT_CHECK_SCRIPT = PROJECT_ROOT / "scripts" / "deployment_check.py"
 EXPECTED_TOOL_NAMES = {
     "record_research_activity",
     "list_research_activities",
@@ -204,6 +205,25 @@ def _fail_with_server_output(process: subprocess.Popen[str], message: str) -> No
     raise RuntimeError(f"{message}\nServer output:\n{details}")
 
 
+def _run_deployment_protocol_probe(url: str, environment: dict[str, str]) -> None:
+    """Require the deployment preflight's read-only tools/list probe to pass."""
+
+    completed = subprocess.run(
+        [sys.executable, str(DEPLOYMENT_CHECK_SCRIPT), "--probe-url", url],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return
+    details = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    raise RuntimeError(
+        "The deployment_check.py read-only MCP protocol probe failed."
+        f"\nOutput:\n{details or '(no output)'}"
+    )
+
+
 def main() -> None:
     """Launch an isolated server process and validate real MCP traffic."""
 
@@ -230,7 +250,9 @@ def main() -> None:
         )
         try:
             _wait_until_listening(process, port)
-            anyio.run(_exercise_client, f"http://127.0.0.1:{port}/mcp", activity_title, Path(data_directory))
+            server_url = f"http://127.0.0.1:{port}/mcp"
+            _run_deployment_protocol_probe(server_url, environment)
+            anyio.run(_exercise_client, server_url, activity_title, Path(data_directory))
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -240,7 +262,10 @@ def main() -> None:
                     process.kill()
                     process.wait(timeout=8)
 
-    print("MCP Streamable HTTP smoke test passed: six tools discovered and called; persistence, report, and isError checks passed.")
+    print(
+        "MCP Streamable HTTP smoke test passed: deployment tools/list probe plus six tools discovered and called; "
+        "persistence, report, and isError checks passed."
+    )
 
 
 if __name__ == "__main__":
