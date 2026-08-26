@@ -1,0 +1,9 @@
+global-exclude .env
+global-exclude *.log
+global-exclude *.py[cod]
+global-exclude __pycache__
+prune .venv
+prune build
+prune dist
+prune runtime_data
+prune data

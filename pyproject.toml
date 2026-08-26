@@ -8,18 +8,30 @@ version = "0.1.0"
 description = "Persistent MCP research-project management tools for ResearchTwin."
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["mcp", "model-context-protocol", "research", "research-management"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+]
 dependencies = [
   "mcp==2.1.0",
   "python-dotenv>=1.0.0,<2.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/sevenboom77/ResearchTwin-MCP-Server"
+
 [project.optional-dependencies]
 dev = [
+  "build>=1.2.0,<2.0.0",
   "pytest>=9.0.0,<10.0.0",
+  "twine>=6.0.0,<7.0.0",
 ]
 
 [project.scripts]
 researchtwin-mcp = "researchtwin_mcp.server:main"
+researchtwin-mcp-server = "researchtwin_mcp.stdio_entry:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

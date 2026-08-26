@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 from mcp.server import MCPServer
 from pydantic import ConfigDict
@@ -26,6 +27,7 @@ def configure_logging(log_level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, log_level),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        stream=sys.stderr,
     )
 
 

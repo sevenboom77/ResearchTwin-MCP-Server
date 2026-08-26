@@ -9,6 +9,8 @@ __pycache__/
 .env
 runtime_data/
 /data/
+/build/
+/dist/
 *.log
 tests/
 docs/
@@ -17,3 +19,5 @@ deploy/
 scripts/start_server.ps1
 scripts/show_connection_info.py
 scripts/smoke_test.py
+scripts/stdio_smoke_test.py
+scripts/wheel_stdio_smoke_test.py
