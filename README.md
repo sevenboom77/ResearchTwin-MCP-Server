@@ -73,6 +73,7 @@ The complete input, output, and error contract is in [docs/mcp_tools.md](docs/mc
 ~~~text
 ResearchTwin-MCP-Server/
 ├── server.py                         # Repository-root launch entry point
+├── Dockerfile                        # Streamable HTTP container image
 ├── src/researchtwin_mcp/
 │   ├── config.py                     # RESEARCHTWIN_* settings validation
 │   ├── server.py                     # MCP server and transport startup
@@ -82,7 +83,9 @@ ResearchTwin-MCP-Server/
 ├── scripts/
 │   ├── start_server.ps1
 │   ├── show_connection_info.py       # Read-only local/LAN URL helper
-│   └── smoke_test.py
+│   ├── smoke_test.py
+│   └── deployment_check.py           # Read-only deployment preflight/probe
+├── deploy/                           # systemd and Nginx deployment examples
 ├── tests/
 ├── docs/
 ├── examples/sample_data/             # Fictional, commit-safe demo data
@@ -91,7 +94,7 @@ ResearchTwin-MCP-Server/
 
 ## Requirements
 
-- Windows PowerShell (the documented workflow)
+- Windows PowerShell for local development, or Linux for deployment
 - Python 3.11 or newer; Python 3.11.x is the recommended competition environment
 - Network access only when OpenTrek runs from another device on the LAN
 
@@ -121,7 +124,7 @@ The server reads these environment variables from the process environment:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| RESEARCHTWIN_HOST | 0.0.0.0 | Bind address. Keeping this default permits trusted LAN clients to reach the service. |
+| RESEARCHTWIN_HOST | 0.0.0.0 | Bind address. The code default permits trusted LAN clients to reach the service; use `127.0.0.1` behind a Linux reverse proxy. |
 | RESEARCHTWIN_PORT | 8000 | TCP port used by the selected transport. |
 | RESEARCHTWIN_DATA_DIR | runtime_data | Local persistence directory, resolved relative to the repository root when relative. |
 | RESEARCHTWIN_LOG_LEVEL | INFO | Python log level. |
@@ -142,6 +145,11 @@ $env:RESEARCHTWIN_LOG_LEVEL = "INFO"
 ~~~
 
 Do not put keys, personal identifiers, or a user-specific IP address in source code or committed configuration. Treat `.env` as local operational configuration, not a secret-management system.
+
+For a Docker container, use `RESEARCHTWIN_HOST=0.0.0.0` inside the container
+and publish the container port only to host loopback when Nginx is the public
+entry point. The supplied Dockerfile already has safe container defaults for
+that pattern.
 
 ## Run
 
@@ -201,6 +209,19 @@ http://<LAN_IPV4>:8000/mcp
 
 Do not hand-invent a transportType JSON value. Select STREAMABLE on the OpenTrek MCP registration page, enter the URL, save, and verify that all six tools are discovered. See [the step-by-step registration guide](docs/open_trek_registration.md) and [OpenTrek integration guidance](docs/open_trek_integration.md) for LAN IPv4 discovery, SSE compatibility, VPN checks, and a safe firewall troubleshooting process.
 
+## Linux and remote deployment
+
+The repository includes a non-root Docker image, a systemd service example, an
+Nginx reverse-proxy example, and a read-only deployment preflight script.
+They package the existing Streamable HTTP server without changing its six MCP
+tools. Follow [the Linux deployment guide](docs/deployment_linux.md) before
+using them.
+
+The current service has no application-level authentication or authorization.
+Never leave `http://<PUBLIC_IP>:8000/mcp` publicly exposed. A public deployment
+needs HTTPS, a reverse proxy, restrictive network access, and an approved
+authentication plan in addition to the provided packaging.
+
 ## Demo Scenario
 
 An end-to-end demonstration can show the difference between knowledge retrieval and persistent action:
@@ -240,5 +261,6 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 - [MCP tool reference](docs/mcp_tools.md)
 - [OpenTrek registration](docs/open_trek_registration.md)
 - [OpenTrek integration](docs/open_trek_integration.md)
+- [Linux deployment](docs/deployment_linux.md)
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)
