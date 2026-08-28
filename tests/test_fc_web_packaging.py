@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,9 @@ def test_fc_linux_lock_is_exact_and_excludes_windows_only_pywin32() -> None:
     builder = _load_builder_module()
     pins = builder._read_locked_requirements(builder.DEFAULT_REQUIREMENTS_PATH)
 
+    assert builder.TARGET_RUNTIME == "FC custom.debian11"
+    assert builder.TARGET_PYTHON == "3.12"
+    assert builder.TARGET_ABI == "cp312"
     assert pins["mcp"] == "2.1.0"
     assert "pydantic-core" in pins
     assert "cryptography" in pins
@@ -53,6 +57,40 @@ def test_fc_wheel_tag_validation_rejects_a_windows_wheel() -> None:
 
     with pytest.raises(builder.BuildError, match="Non-FC platform"):
         builder._validate_wheel_tags(windows_wheel)
+
+
+def test_fc_wheel_tag_validation_rejects_cpython311_specific_wheel() -> None:
+    """A CPython 3.11 ABI wheel is not interchangeable with the cp312 target."""
+
+    builder = _load_builder_module()
+    cpython311_wheel = builder.WheelMetadata(
+        path=Path("example-0-cp311-cp311-manylinux2014_x86_64.whl"),
+        name="example",
+        version="0",
+        tags=("cp311-cp311-manylinux2014_x86_64",),
+        requirements=(),
+    )
+
+    with pytest.raises(builder.BuildError, match="CPython 3.12 compatible"):
+        builder._validate_wheel_tags(cpython311_wheel)
+
+
+def test_fc_wheel_tag_validation_accepts_explicit_abi3_extension(tmp_path: Path) -> None:
+    """A lower-minimum ABI3 wheel is accepted only when its extension says abi3."""
+
+    builder = _load_builder_module()
+    wheel_path = tmp_path / "example-0-cp311-abi3-manylinux2014_x86_64.whl"
+    with zipfile.ZipFile(wheel_path, mode="w") as archive:
+        archive.writestr("example/extension.abi3.so", b"ELF")
+    abi3_wheel = builder.WheelMetadata(
+        path=wheel_path,
+        name="example",
+        version="0",
+        tags=("cp311-abi3-manylinux2014_x86_64",),
+        requirements=(),
+    )
+
+    builder._validate_wheel_tags(abi3_wheel)
 
 
 def test_fc_elf_validator_accepts_only_x86_64_elf64(tmp_path: Path) -> None:

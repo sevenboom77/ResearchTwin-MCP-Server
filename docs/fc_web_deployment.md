@@ -5,7 +5,7 @@ following deployment route:
 
 ~~~text
 ResearchTwin Remote MCP
-    -> FC Web Function (custom.debian12)
+    -> FC Web Function (custom.debian11)
     -> public HTTPS /mcp
     -> BaiLian Remote MCP
     -> OpenTrek
@@ -20,24 +20,25 @@ separate rollback baseline and must remain unchanged.
 | Item | Target |
 | --- | --- |
 | FC function type | Web Function |
-| Runtime | Custom Runtime Debian 12 (`custom.debian12`) |
+| Runtime | Custom Runtime Debian 11 (`custom.debian11`) |
 | Architecture | x86_64 |
-| Python | `/usr/bin/python3`, CPython 3.11 |
-| Application command | `/usr/bin/python3 -m researchtwin_mcp.remote_entry` |
+| Python | CPython 3.12.4 from `/var/fc/lang/python3.12` (PATH required) |
+| Application command | `python3 -m researchtwin_mcp.remote_entry` (after the documented PATH is set) |
 | Listener | `RESEARCHTWIN_HOST=0.0.0.0`, `RESEARCHTWIN_PORT=8000` |
 | MCP transport | official MCP Python SDK 2.1.0 Streamable HTTP |
 | MCP route | `/mcp` |
 
-Alibaba Cloud's custom-runtime documentation currently lists Debian 12
-(`custom.debian12`) as x86_64 and lists Python 3.11.2 at
-`/usr/bin/python3`, with no extra environment setup for the interpreter. It
-also states that uploaded code resides at `/code`. See the [official custom
-runtime reference](https://help.aliyun.com/zh/functioncompute/custom-runtime/).
+Alibaba Cloud's custom-runtime documentation lists Debian 11
+(`custom.debian11`) as x86_64 and lists Python 3.12.4 at
+`/var/fc/lang/python3.12`. It requires
+`PATH=/var/fc/lang/python3.12/bin:$PATH` for that interpreter. The same
+reference states that uploaded code resides at `/code`. See the [official
+custom runtime reference](https://help.aliyun.com/zh/functioncompute/custom-runtime/).
 
-The target FC region must support `custom.debian12`. The same reference
-currently lists Hangzhou, Qingdao, Beijing, Zhangjiakou, Hohhot, and Chengdu;
-confirm the region availability in the actual console before selecting a
-region. Prefer the existing BaiLian region only if it supports this runtime.
+The target FC region must expose `custom.debian11` in the actual console.
+The current public-region list in the reference is specifically called out
+for Debian 12, so do not infer Debian 11 availability from it; verify the
+selected region before creating or updating a function.
 
 ## Why the Windows virtual environment is not deployable
 
@@ -46,14 +47,15 @@ contain Windows native extensions such as `.pyd`, while the FC target needs
 Linux x86_64 ELF `.so` extensions for packages including `pydantic-core` and
 `cryptography`.
 
-The committed `requirements/fc-web-linux-x86_64-py311.txt` is an exact lock of
-the target dependency closure. It intentionally excludes `pywin32`: MCP SDK
-2.1.0 declares it only under the `sys_platform == "win32"` marker, which is
-false in the Linux FC target.
+The committed `requirements/fc-web-linux-x86_64-py312.txt` is an exact lock of
+the Debian 11 / CPython 3.12 target dependency closure. It intentionally
+excludes `pywin32`: MCP SDK 2.1.0 declares it only under the
+`sys_platform == "win32"` marker, which is false in the Linux FC target.
 
 ## Build the ZIP from a clean source tree
 
-Use the project Python 3.11 environment after pulling the intended commit:
+Use the project Python 3.11 environment to run the cross-platform builder
+after pulling the intended commit:
 
 ~~~powershell
 Set-Location C:\work\ResearchTwin-MCP-Server
@@ -69,14 +71,16 @@ manifest identify an actual commit. It creates only ignored generated paths:
 build/fc-web-project-wheel/
 build/fc-web-wheelhouse/
 build/fc-web-staging/
-dist_fc/researchtwin-mcp-fc-web-<short-git-sha>.zip
-dist_fc/researchtwin-mcp-fc-web-<short-git-sha>.zip.sha256
+dist_fc/researchtwin-mcp-fc-web-debian11-py312-<short-git-sha>.zip
+dist_fc/researchtwin-mcp-fc-web-debian11-py312-<short-git-sha>.zip.sha256
 ~~~
 
 It builds the current source wheel locally instead of using public PyPI
 0.1.0, then downloads only locked `manylinux` x86_64 or pure-Python wheels
-with pip target selectors for CPython 3.11. It does not run `uvx` or `pip
-install` when FC starts.
+with pip target selectors for CPython 3.12. It does not run `uvx` or `pip
+install` when FC starts. The historical CPython 3.11 lock remains available
+as `requirements/fc-web-linux-x86_64-py311.txt`; the builder's default target
+is the Debian 11 / CPython 3.12 lock.
 
 ## Static checks performed by the builder
 
@@ -87,7 +91,8 @@ following:
   Cryptography import paths at ZIP root;
 - a Windows `.pyd`, `.dll`, macOS binary, source distribution, or non-x86_64
   wheel tag;
-- a native extension that is not 64-bit little-endian x86_64 ELF;
+- a native extension that is not 64-bit little-endian x86_64 ELF, or a
+  CPython-specific `cpython-311`/`cp311` file;
 - missing native `pydantic_core/_pydantic_core*.so` or
   `cryptography/hazmat/bindings/_rust*.so`;
 - `.git`, `.venv`, `.env`, `runtime_data`, `__pycache__`, or third-party test
@@ -101,6 +106,13 @@ The checked ZIP has a flat import root. It must contain
 extra directory. A non-secret `RESEARCHTWIN_FC_WEB_PACKAGE.json` manifest
 records wheel names/tags and native-extension paths.
 
+The current `cryptography==50.0.1` Linux wheel is tagged
+`cp311-abi3`. This is intentionally retained rather than silently downgrading
+the dependency: its packaged Rust extension is `_rust.abi3.so`, so the
+validator proves it is an ABI3 extension compatible with CPython 3.12. It is
+not counted as a CPython-specific `cpython-311` file; any such file or a
+non-ABI3 `cp311` wheel is rejected.
+
 The FC quota documentation lists ZIP code packages uploaded through the
 console, developer tools, or OSS as 100 MB in many regions and 500 MB in
 selected regions. The builder uses the lower 100,000,000-byte threshold. If a
@@ -112,7 +124,7 @@ region's limit. See [FC quotas and limits](https://help.aliyun.com/zh/functionco
 
 Windows can prove the ZIP layout, package metadata, wheel tags, ELF headers,
 absence of `.pyd`, static Python syntax, checksum, and credential-pattern
-scan. It cannot load the Linux `.so` files, start Debian 12 FC, or prove a
+scan. It cannot load the Linux `.so` files, start Debian 11 FC, or prove a
 public `/mcp` connection. Those are separate FC and public-client acceptance
 steps.
 
@@ -121,12 +133,12 @@ steps.
 When an authorized operator creates the function in the FC console:
 
 1. Choose **Web Function**.
-2. Select **Custom Runtime -> Debian 12** and **x86_64**.
+2. Select **Custom Runtime -> Debian 11** (`custom.debian11`) and **x86_64**.
 3. Upload the generated ZIP from `dist_fc/`.
 4. Set the start command exactly:
 
    ~~~text
-   /usr/bin/python3 -m researchtwin_mcp.remote_entry
+   python3 -m researchtwin_mcp.remote_entry
    ~~~
 
 5. Set the FC **listener port** to `8000`. FC Web Function examples use 9000
@@ -139,6 +151,7 @@ When an authorized operator creates the function in the FC console:
    RESEARCHTWIN_HOST=0.0.0.0
    RESEARCHTWIN_PORT=8000
    RESEARCHTWIN_LOG_LEVEL=INFO
+   PATH=/var/fc/lang/python3.12/bin:$PATH
    ~~~
 
 7. For only a short first connectivity test, set

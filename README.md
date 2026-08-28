@@ -89,7 +89,7 @@ ResearchTwin-MCP-Server/
 │   ├── show_connection_info.py       # Read-only local/LAN URL helper
 │   ├── smoke_test.py
 │   ├── deployment_check.py           # Read-only deployment preflight/probe
-│   ├── build_fc_web_zip.py            # Linux x86_64 CPython 3.11 FC ZIP builder
+│   ├── build_fc_web_zip.py            # Debian 11 x86_64 CPython 3.12 FC ZIP builder
 │   ├── stdio_smoke_test.py            # Official Client stdio protocol smoke
 │   └── wheel_stdio_smoke_test.py      # Non-editable wheel stdio validation
 ├── deploy/                           # systemd and Nginx deployment examples

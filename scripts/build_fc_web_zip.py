@@ -1,13 +1,13 @@
-"""Build a Linux x86_64 CPython 3.11 ZIP for an FC Web Function.
+"""Build a Linux x86_64 CPython 3.12 ZIP for an FC Web Function.
 
 The development host can be Windows, so this builder never copies its virtual
 environment.  It instead downloads the locked manylinux/pure-Python wheel
-closure for the FC Debian 12 target, installs those wheels into a clean staging
+closure for the FC Debian 11 target, installs those wheels into a clean staging
 directory, and performs structural and binary-format checks before archiving.
 
 The resulting ZIP is an import root: FC can start it with::
 
-    /usr/bin/python3 -m researchtwin_mcp.remote_entry
+    python3 -m researchtwin_mcp.remote_entry
 
 This script deliberately does not create, configure, or invoke a cloud
 function.  It cannot prove that Linux will load the native extensions or that
@@ -42,14 +42,14 @@ STAGING_DIR = BUILD_ROOT / "fc-web-staging"
 WHEELHOUSE_DIR = BUILD_ROOT / "fc-web-wheelhouse"
 PROJECT_WHEEL_DIR = BUILD_ROOT / "fc-web-project-wheel"
 DIST_FC_DIR = PROJECT_ROOT / "dist_fc"
-DEFAULT_REQUIREMENTS_PATH = PROJECT_ROOT / "requirements" / "fc-web-linux-x86_64-py311.txt"
+DEFAULT_REQUIREMENTS_PATH = PROJECT_ROOT / "requirements" / "fc-web-linux-x86_64-py312.txt"
 
-TARGET_RUNTIME = "FC custom.debian12"
-TARGET_OS = "Debian 12"
+TARGET_RUNTIME = "FC custom.debian11"
+TARGET_OS = "Debian 11"
 TARGET_ARCHITECTURE = "x86_64"
-TARGET_PYTHON = "3.11"
+TARGET_PYTHON = "3.12"
 TARGET_IMPLEMENTATION = "cp"
-TARGET_ABI = "cp311"
+TARGET_ABI = "cp312"
 TARGET_PLATFORMS = (
     "manylinux2014_x86_64",
     "manylinux_2_17_x86_64",
@@ -74,6 +74,8 @@ REQUIRED_NATIVE_PREFIXES = {
 FORBIDDEN_PATH_PARTS = frozenset({".git", ".venv", "tests", "runtime_data", "__pycache__"})
 PRUNABLE_TEST_DIRECTORY_NAMES = frozenset({"test", "tests"})
 FORBIDDEN_SUFFIXES = frozenset({".pyd", ".dll", ".dylib", ".pyc", ".pyo"})
+CP311_MARKERS = ("cpython-311", "cp311")
+WINDOWS_BINARY_SUFFIXES = frozenset({".pyd", ".dll"})
 TEXT_FILE_SUFFIXES = frozenset({".cfg", ".ini", ".json", ".md", ".py", ".pyi", ".rst", ".toml", ".txt", ".yaml", ".yml"})
 
 
@@ -99,6 +101,8 @@ class StaticValidation:
     native_extensions: tuple[str, ...]
     checked_python_files: int
     checked_text_files: int
+    cp311_file_count: int
+    windows_pyd_dll_count: int
 
 
 def _canonical_distribution_name(name: str) -> str:
@@ -186,7 +190,7 @@ def _read_project_metadata() -> tuple[str, str, list[str], str]:
     if requires_python != ">=3.11":
         raise BuildError(
             "The FC package validator currently expects requires-python == '>=3.11'. "
-            "Review and update the CPython 3.11 compatibility check before changing it."
+            "Review and update the CPython 3.12 compatibility check before changing it."
         )
     if f"mcp=={EXPECTED_MCP_VERSION}" not in dependencies:
         raise BuildError(
@@ -322,21 +326,61 @@ def _read_wheel_metadata(path: Path) -> WheelMetadata:
     )
 
 
+def _abi3_native_files(path: Path) -> tuple[str, ...]:
+    """Return native files in a wheel so an ABI3 tag can be checked honestly."""
+
+    with zipfile.ZipFile(path) as archive:
+        return tuple(
+            name
+            for name in archive.namelist()
+            if name.lower().endswith(".so") and ".dist-info/" not in name.lower()
+        )
+
+
 def _validate_wheel_tags(metadata: WheelMetadata) -> None:
-    """Reject wheels that advertise a Windows, macOS, non-x86_64, or musl target."""
+    """Reject non-Linux wheels and Python tags that cannot run on CPython 3.12.
+
+    A wheel tagged ``cp311-abi3`` is acceptable for the Debian 11 target only
+    when every native extension is explicitly ABI3 (for example
+    ``_rust.abi3.so``).  A CPython-specific ``cp311`` wheel or
+    ``cpython-311`` extension is never accepted.
+    """
 
     for tag in metadata.tags:
         try:
-            _python_tag, _abi_tag, platform_tag = tag.split("-", maxsplit=2)
+            python_tag, abi_tag, platform_tag = tag.split("-", maxsplit=2)
         except ValueError as exc:
             raise BuildError(f"Malformed wheel compatibility tag {tag!r} in {metadata.path.name}") from exc
         normalized = platform_tag.lower()
         if normalized == "any":
+            if python_tag not in {"py3", "py312"} or abi_tag != "none":
+                raise BuildError(f"Wheel Python tag is not CPython 3.12 compatible: {tag!r} in {metadata.path.name}")
             continue
         if "win" in normalized or "macosx" in normalized or "musllinux" in normalized:
             raise BuildError(f"Non-FC platform wheel tag {tag!r} in {metadata.path.name}")
         if "linux" not in normalized or "x86_64" not in normalized:
             raise BuildError(f"Wheel tag is not Linux x86_64 compatible: {tag!r} in {metadata.path.name}")
+
+        if python_tag == "cp312" and abi_tag in {"cp312", "abi3"}:
+            if abi_tag == "abi3":
+                native_files = _abi3_native_files(metadata.path)
+                if not native_files or any(
+                    ".abi3.so" not in name.lower() or "cpython-311" in name.lower() for name in native_files
+                ):
+                    raise BuildError(
+                        f"ABI3 wheel does not contain only explicit ABI3 extensions: {metadata.path.name}"
+                    )
+            continue
+
+        if python_tag.startswith("cp") and python_tag[2:].isdigit() and abi_tag == "abi3":
+            minimum_python = int(python_tag[2:])
+            if minimum_python <= 312:
+                native_files = _abi3_native_files(metadata.path)
+                if native_files and all(
+                    ".abi3.so" in name.lower() and "cpython-311" not in name.lower() for name in native_files
+                ):
+                    continue
+        raise BuildError(f"Wheel Python tag is not CPython 3.12 compatible: {tag!r} in {metadata.path.name}")
 
 
 def _validate_wheelhouse(wheels: Iterable[Path], expected_pins: dict[str, str]) -> tuple[WheelMetadata, ...]:
@@ -373,18 +417,18 @@ def _validate_wheelhouse(wheels: Iterable[Path], expected_pins: dict[str, str]) 
 
 
 def _fc_marker_environment() -> dict[str, str]:
-    """Return the PEP 508 environment represented by FC Debian 12 Python 3.11."""
+    """Return the PEP 508 environment represented by FC Debian 11 Python 3.12."""
 
     environment = default_environment()
     environment.update(
         {
             "implementation_name": "cpython",
-            "implementation_version": "3.11.2",
+            "implementation_version": "3.12.4",
             "os_name": "posix",
             "platform_machine": TARGET_ARCHITECTURE,
             "platform_python_implementation": "CPython",
             "platform_system": "Linux",
-            "python_full_version": "3.11.2",
+            "python_full_version": "3.12.4",
             "python_version": TARGET_PYTHON,
             "sys_platform": "linux",
             "extra": "",
@@ -547,22 +591,33 @@ def _validate_staging() -> StaticValidation:
 
     native_extensions: list[str] = []
     python_files: list[Path] = []
+    cp311_files: list[str] = []
+    windows_pyd_dll_files: list[str] = []
     all_files = sorted(path for path in STAGING_DIR.rglob("*") if path.is_file())
     for path in all_files:
         relative = path.relative_to(STAGING_DIR)
-        if any(part in FORBIDDEN_PATH_PARTS for part in relative.parts):
+        relative_name = relative.as_posix()
+        relative_lower = relative_name.lower()
+        if any(part.lower() in FORBIDDEN_PATH_PARTS for part in relative.parts):
             raise BuildError(f"Forbidden development or runtime path entered staging: {relative.as_posix()}")
-        if path.name == ".env" or path.suffix.lower() in FORBIDDEN_SUFFIXES:
-            raise BuildError(f"Forbidden Windows/cache/secret file entered staging: {relative.as_posix()}")
+        if any(marker in relative_lower for marker in CP311_MARKERS):
+            cp311_files.append(relative_name)
+        if path.suffix.lower() in WINDOWS_BINARY_SUFFIXES:
+            windows_pyd_dll_files.append(relative_name)
+        if path.name.lower() == ".env" or path.suffix.lower() in FORBIDDEN_SUFFIXES:
+            raise BuildError(f"Forbidden Windows/cache/secret file entered staging: {relative_name}")
         if path.suffix.lower() == ".so":
             _validate_elf_x86_64(path)
-            native_extensions.append(relative.as_posix())
+            native_extensions.append(relative_name)
         if path.suffix.lower() == ".py":
             try:
                 compile(path.read_text(encoding="utf-8"), str(relative), "exec")
             except (SyntaxError, UnicodeDecodeError) as exc:
-                raise BuildError(f"Pure-Python static compile failed for {relative.as_posix()}: {exc}") from exc
+                raise BuildError(f"Pure-Python static compile failed for {relative_name}: {exc}") from exc
             python_files.append(path)
+
+    if cp311_files:
+        raise BuildError("CPython 3.11-specific files entered the CPython 3.12 staging package: " + ", ".join(cp311_files))
 
     for distribution, prefix in REQUIRED_NATIVE_PREFIXES.items():
         if not any(path.startswith(prefix) for path in native_extensions):
@@ -575,6 +630,8 @@ def _validate_staging() -> StaticValidation:
         native_extensions=tuple(native_extensions),
         checked_python_files=len(python_files),
         checked_text_files=text_files,
+        cp311_file_count=len(cp311_files),
+        windows_pyd_dll_count=len(windows_pyd_dll_files),
     )
 
 
@@ -600,7 +657,7 @@ def _write_manifest(
             "operating_system": TARGET_OS,
             "architecture": TARGET_ARCHITECTURE,
             "python": TARGET_PYTHON,
-            "startup_command": "/usr/bin/python3 -m researchtwin_mcp.remote_entry",
+            "startup_command": "python3 -m researchtwin_mcp.remote_entry",
             "listener_port": 8000,
             "mcp_path": "/mcp",
             "manylinux_platform_tags": list(TARGET_PLATFORMS),
@@ -618,6 +675,8 @@ def _write_manifest(
         "pruned_non_runtime_test_directories": sorted(pruned_test_directories),
         "static_checks": {
             "windows_pyd_rejected": True,
+            "windows_pyd_dll_file_count": validation.windows_pyd_dll_count,
+            "cp311_file_count": validation.cp311_file_count,
             "linux_elf_x86_64_checked": True,
             "credential_shaped_values_absent": True,
             "python_source_files_compiled": validation.checked_python_files,
@@ -670,10 +729,12 @@ def _validate_zip(destination: Path) -> None:
             normalized = Path(name)
             if name.startswith("/") or ".." in normalized.parts:
                 raise BuildError(f"ZIP contains an unsafe archive member path: {name}")
-            if any(part in FORBIDDEN_PATH_PARTS for part in normalized.parts):
+            if any(part.lower() in FORBIDDEN_PATH_PARTS for part in normalized.parts):
                 raise BuildError(f"ZIP contains a forbidden path: {name}")
+            if any(marker in name.lower() for marker in CP311_MARKERS):
+                raise BuildError(f"ZIP contains a CPython 3.11-specific file: {name}")
             suffix = normalized.suffix.lower()
-            if normalized.name == ".env" or suffix in FORBIDDEN_SUFFIXES:
+            if normalized.name.lower() == ".env" or suffix in FORBIDDEN_SUFFIXES:
                 raise BuildError(f"ZIP contains a forbidden Windows/cache/secret file: {name}")
             if suffix == ".so":
                 header = archive.read(name)[:20]
@@ -721,7 +782,7 @@ def build_fc_web_zip(arguments: argparse.Namespace) -> tuple[Path, Path, StaticV
 
     DIST_FC_DIR.mkdir(parents=True, exist_ok=True)
     _require_inside_project(DIST_FC_DIR)
-    destination = DIST_FC_DIR / f"researchtwin-mcp-fc-web-{revision_label}.zip"
+    destination = DIST_FC_DIR / f"researchtwin-mcp-fc-web-debian11-py312-{revision_label}.zip"
     _remove_existing_output(destination, overwrite=arguments.overwrite)
 
     project_wheel = _build_project_wheel()
@@ -767,12 +828,12 @@ def build_fc_web_zip(arguments: argparse.Namespace) -> tuple[Path, Path, StaticV
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the intentionally small, explicit FC package command line."""
 
-    parser = argparse.ArgumentParser(description="Build a static-validated FC Debian 12 CPython 3.11 MCP ZIP.")
+    parser = argparse.ArgumentParser(description="Build a static-validated FC Debian 11 CPython 3.12 MCP ZIP.")
     parser.add_argument(
         "--requirements-file",
         type=Path,
         default=DEFAULT_REQUIREMENTS_PATH,
-        help="Committed exact Linux wheel lock; defaults to requirements/fc-web-linux-x86_64-py311.txt.",
+        help="Committed exact Linux wheel lock; defaults to requirements/fc-web-linux-x86_64-py312.txt.",
     )
     parser.add_argument(
         "--max-zip-bytes",
@@ -809,13 +870,14 @@ def main() -> int:
     digest = checksum_path.read_text(encoding="ascii").split(maxsplit=1)[0]
     print("FC Web ZIP build succeeded")
     print(f"target: {TARGET_OS} / {TARGET_ARCHITECTURE} / CPython {TARGET_PYTHON}")
-    print("startup_command: /usr/bin/python3 -m researchtwin_mcp.remote_entry")
+    print("startup_command: python3 -m researchtwin_mcp.remote_entry")
     print("listener_port: 8000")
     print("mcp_endpoint: /mcp")
     print(f"zip: {destination}")
     print(f"zip_bytes: {destination.stat().st_size}")
     print(f"sha256: {digest}")
-    print("windows_pyd: none")
+    print(f"cp311_file_count: {validation.cp311_file_count}")
+    print(f"windows_pyd_dll_file_count: {validation.windows_pyd_dll_count}")
     print(f"linux_x86_64_elf_so_count: {len(validation.native_extensions)}")
     for native_extension in validation.native_extensions:
         print(f"linux_so: {native_extension}")
