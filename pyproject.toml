@@ -32,6 +32,7 @@ dev = [
 [project.scripts]
 researchtwin-mcp = "researchtwin_mcp.server:main"
 researchtwin-mcp-server = "researchtwin_mcp.stdio_entry:main"
+researchtwin-mcp-remote = "researchtwin_mcp.remote_entry:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

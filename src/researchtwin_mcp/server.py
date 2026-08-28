@@ -103,6 +103,46 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_streamable_http_server(settings: Settings) -> None:
+    """Run the shared six-tool server as a persistent Streamable HTTP service.
+
+    This is deliberately a small transport wrapper around :func:`create_server`.
+    It performs no separate tool registration, package resolution, or runtime
+    dependency installation, so stdio and Remote MCP keep the same contracts.
+    """
+
+    server = create_server(settings)
+    logger.info(
+        "Starting ResearchTwin MCP Server transport=streamable-http host=%s port=%s path=/mcp",
+        settings.host,
+        settings.port,
+    )
+    server.run(
+        "streamable-http",
+        host=settings.host,
+        port=settings.port,
+        streamable_http_path="/mcp",
+    )
+
+
+def run_sse_server(settings: Settings) -> None:
+    """Run the shared server over the retained legacy SSE compatibility mode."""
+
+    server = create_server(settings)
+    logger.info(
+        "Starting ResearchTwin MCP Server transport=sse host=%s port=%s path=/sse",
+        settings.host,
+        settings.port,
+    )
+    server.run(
+        "sse",
+        host=settings.host,
+        port=settings.port,
+        sse_path="/sse",
+        message_path="/messages/",
+    )
+
+
 def main() -> None:
     """Start the configured MCP server and block until it is stopped."""
 
@@ -112,32 +152,10 @@ def main() -> None:
     except ConfigurationError as exc:
         raise SystemExit(f"Configuration error: {exc}") from exc
 
-    server = create_server(settings)
     if args.transport == "streamable-http":
-        logger.info(
-            "Starting ResearchTwin MCP Server transport=streamable-http host=%s port=%s path=/mcp",
-            settings.host,
-            settings.port,
-        )
-        server.run(
-            "streamable-http",
-            host=settings.host,
-            port=settings.port,
-            streamable_http_path="/mcp",
-        )
+        run_streamable_http_server(settings)
     else:
-        logger.info(
-            "Starting ResearchTwin MCP Server transport=sse host=%s port=%s path=/sse",
-            settings.host,
-            settings.port,
-        )
-        server.run(
-            "sse",
-            host=settings.host,
-            port=settings.port,
-            sse_path="/sse",
-            message_path="/messages/",
-        )
+        run_sse_server(settings)
 
 
 if __name__ == "__main__":
