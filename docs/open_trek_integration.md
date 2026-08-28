@@ -78,7 +78,6 @@ In OpenTrek, open **工具箱 → 注册 MCP 服务** (Toolbox → Register MCP 
 | Description | Provides persistent research activity, advisor instruction, project status, and research report tools for the ResearchTwin agent. |
 | URL | http://<LAN_IPV4>:8000/mcp |
 | Transport | Select **STREAMABLE** in the UI |
-| Timeout | 60 seconds, if the UI provides a timeout field |
 | Enabled | Enabled |
 
 Save the entry, then use OpenTrek's tool discovery or test feature. It should expose:

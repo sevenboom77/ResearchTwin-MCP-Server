@@ -1,8 +1,10 @@
 # PyPI release and BaiLian uvx preparation
 
-This document is release preparation only. At the time of writing,
-ResearchTwin MCP Server has **not** been published to PyPI, uploaded to
-TestPyPI, deployed to BaiLian, or connected to Function Compute (FC).
+This document began as release preparation. The public PyPI project now has
+an immutable 0.1.0 release (uploaded on 2026-08-26). Do not upload another
+artifact as 0.1.0. The current source tree's Remote MCP entry is newer local
+work and requires a new version plus a separate, explicitly authorized PyPI
+release before it can be distributed through uvx.
 
 ## Current package identity
 
@@ -14,11 +16,12 @@ TestPyPI, deployed to BaiLian, or connected to Function Compute (FC).
 | Runtime dependencies | mcp==2.1.0, python-dotenv>=1.0.0,<2.0.0 |
 | HTTP/SSE entry point | researchtwin-mcp |
 | BaiLian stdio entry point | researchtwin-mcp-server |
+| Remote Streamable HTTP entry point | researchtwin-mcp-remote (current source; not in PyPI 0.1.0) |
 
-The package name was checked against the public PyPI JSON endpoint on
-2026-08-26 and returned HTTP 404. That suggests the name was not published at
-that instant; it is not a reservation or a guarantee that PyPI will accept a
-future upload.
+The historic pre-release name check is no longer current. The [public PyPI
+project page](https://pypi.org/project/researchtwin-mcp-server/) lists
+researchtwin-mcp-server 0.1.0. Its version is immutable, so a later Remote
+release must select a new unused version rather than overwrite this baseline.
 
 ## 1. What the stdio entry point does
 

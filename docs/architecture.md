@@ -79,7 +79,7 @@ message endpoint:  /messages/
 Only select the matching transport in the client. The two transports are alternatives; the default integration path is Streamable HTTP. See [OpenTrek integration](open_trek_integration.md) for safe registration and network troubleshooting.
 
 The third, independent transport is stdio for a host that launches the
-researchtwin-mcp-server console command, such as a future BaiLian uvx
+researchtwin-mcp-server console command, such as the retained BaiLian uvx
 deployment:
 
 ~~~text

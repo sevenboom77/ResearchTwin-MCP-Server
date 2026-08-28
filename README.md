@@ -48,6 +48,7 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries, persi
 
 - Official Python MCP SDK integration.
 - Streamable HTTP as the primary MCP transport at /mcp.
+- Dedicated Remote MCP entry point for pre-installed, long-lived Streamable HTTP deployment.
 - Optional command-line SSE compatibility transport, when selected at startup.
 - Dedicated stdio console entry point for uvx-hosted MCP clients.
 - Six focused tools instead of a monolithic server script.
@@ -78,6 +79,7 @@ ResearchTwin-MCP-Server/
 ├── src/researchtwin_mcp/
 │   ├── config.py                     # RESEARCHTWIN_* settings validation
 │   ├── server.py                     # MCP server and transport startup
+│   ├── remote_entry.py                # Dedicated persistent Streamable HTTP entry
 │   ├── stdio_entry.py                # Dedicated uvx/stdin-stdout MCP entry
 │   ├── models/                       # Validation helpers and schemas
 │   ├── storage/                      # Shared JSON persistence layer
@@ -168,6 +170,13 @@ With the virtual environment active:
 python server.py
 ~~~
 
+For a deployment process that explicitly selects only the persistent Remote
+Streamable HTTP transport, use:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m researchtwin_mcp.remote_entry
+~~~
+
 The default primary endpoint is:
 
 ~~~text
@@ -189,10 +198,11 @@ Streamable HTTP is the normal mode. For explicit SSE compatibility, run python s
 
 The separate researchtwin-mcp-server console command runs the same six tools
 over MCP stdin/stdout. It does not start HTTP, Uvicorn, or a listener on port
-8000. The package is not published to PyPI at this time, and uvx is not yet
-locally verified, so do not configure BaiLian from this repository alone.
-Follow [the release-preparation guide](docs/pypi_release.md) after a project
-owner completes the manual PyPI release.
+8000. PyPI release 0.1.0 remains the compatible stdio baseline. The Remote
+entry added in this source tree is not part of that immutable PyPI release;
+a future release needs a new version and separate publication. Do not replace
+the existing BaiLian uvx service with this local source until the parallel
+Remote deployment has completed its own public protocol verification.
 
 ### Demo network safety
 
@@ -227,6 +237,14 @@ It launches the dedicated console entry point through the official MCP stdio
 client, verifies initialization and exactly six tools, records and reads back
 temporary data, and checks an MCP isError response. It does not listen on port
 8000.
+
+Run the five-session Remote MCP stability check to verify the dedicated
+pre-installed Python process. It uses its own temporary data directory and
+prints cold/warm protocol latency measurements:
+
+~~~powershell
+.\.venv\Scripts\python.exe .\scripts\remote_stability_test.py --rounds 5
+~~~
 
 ## OpenTrek Integration
 
@@ -291,6 +309,7 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 - [OpenTrek registration](docs/open_trek_registration.md)
 - [OpenTrek integration](docs/open_trek_integration.md)
 - [Linux deployment](docs/deployment_linux.md)
+- [Remote MCP service](docs/remote_mcp.md)
 - [PyPI and BaiLian uvx preparation](docs/pypi_release.md)
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)

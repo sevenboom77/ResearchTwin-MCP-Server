@@ -29,4 +29,9 @@ USER researchtwin
 
 EXPOSE 8000
 
-CMD ["python", "server.py", "--transport", "streamable-http"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python scripts/deployment_check.py --probe-url http://127.0.0.1:8000/mcp || exit 1
+
+# Dependencies are installed above during image build. Runtime starts the
+# persistent official SDK transport directly and never invokes uvx.
+CMD ["python", "-m", "researchtwin_mcp.remote_entry"]

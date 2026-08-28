@@ -16,6 +16,12 @@ The server continues to expose the existing Streamable HTTP endpoint:
 /mcp
 ~~~
 
+The dedicated long-lived process entry point is
+`python -m researchtwin_mcp.remote_entry`. It reuses the same six-tool server
+factory as the retained stdio entry point, but starts Streamable HTTP directly
+from the already-installed Python environment. It does not invoke `uvx` at
+runtime.
+
 The recommended production shape is:
 
 ~~~text
@@ -326,30 +332,17 @@ Do this only after the host is running and reachable from the platform.
 
 | Field | Value |
 | --- | --- |
-| Service name | ResearchTwin-MCP |
+| Service name | ResearchTwin-MCP-Remote |
 | Transport | Select STREAMABLE |
 | URL, trusted campus server | http://<CAMPUS_SERVER_IP>:8000/mcp |
 | URL, public TLS deployment | https://<REACHABLE_HOST>/mcp |
-| Timeout | 60 seconds, if the UI offers it |
 
-If the current platform accepts an imported configuration in this format, the
-deployment target is:
-
-~~~json
-{
-  "mcpServers": {
-    "researchtwin-mcp": {
-      "disabled": false,
-      "timeout": 60,
-      "url": "https://<REACHABLE_HOST>/mcp",
-      "transportType": "streamable"
-    }
-  }
-}
-~~~
-
-Use the actual UI's transport selection if it does not accept that shape. Do
-not write a future real address into source code or documentation.
+Use the actual current OpenTrek or BaiLian UI to select the Streamable HTTP
+transport and enter the public `/mcp` URL. Do not hand-author an imported
+configuration payload or guess its field names. For BaiLian specifically,
+create a new parallel service named `ResearchTwin-MCP-Remote` only after this
+endpoint has passed the local and public protocol checks; leave the existing
+uvx service untouched as the rollback baseline.
 
 ## K. Updates, persistence, and backups
 
