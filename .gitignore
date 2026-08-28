@@ -10,5 +10,6 @@ runtime_data/
 /data/
 /build/
 /dist/
+/dist_fc/
 .pypirc
 *.log
