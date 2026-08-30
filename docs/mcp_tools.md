@@ -561,3 +561,4 @@ Other representative error codes include invalid_date, invalid_enum, invalid_lim
 External search result != Candidate Intelligence != Project Knowledge.
 
 The ResearchTwin agent first calls `get_research_context`, then the LLM formulates a targeted query for `search_external_research`. Raw arXiv/GitHub results are evaluated by the agent before it explicitly calls `record_candidate_intelligence`; no search result is automatically persisted or promoted.
+`record_research_intelligence_brief` and `list_research_intelligence_briefs` persist and retrieve Agent-generated briefs. They do not generate prose, call an LLM, schedule work, write knowledge bases, or change candidate status.

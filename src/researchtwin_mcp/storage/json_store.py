@@ -31,17 +31,20 @@ RESEARCH_LOGS_FILE: Final = "research_logs.json"
 PROJECT_STATUS_FILE: Final = "project_status.json"
 ADVISOR_INSTRUCTIONS_FILE: Final = "advisor_instructions.json"
 CANDIDATE_INTELLIGENCE_FILE: Final = "candidate_intelligence.json"
+RESEARCH_INTELLIGENCE_BRIEFS_FILE: Final = "research_intelligence_briefs.json"
 
 DEFAULT_RESEARCH_LOGS: Final[JsonObject] = {"activities": []}
 DEFAULT_PROJECT_STATUS: Final[JsonObject] = {}
 DEFAULT_ADVISOR_INSTRUCTIONS: Final[JsonObject] = {"instructions": []}
 DEFAULT_CANDIDATE_INTELLIGENCE: Final[JsonObject] = {"candidates": []}
+DEFAULT_RESEARCH_INTELLIGENCE_BRIEFS: Final[JsonObject] = {"briefs": []}
 
 RUNTIME_JSON_DEFAULTS: Final[dict[str, JsonObject]] = {
     RESEARCH_LOGS_FILE: DEFAULT_RESEARCH_LOGS,
     PROJECT_STATUS_FILE: DEFAULT_PROJECT_STATUS,
     ADVISOR_INSTRUCTIONS_FILE: DEFAULT_ADVISOR_INSTRUCTIONS,
     CANDIDATE_INTELLIGENCE_FILE: DEFAULT_CANDIDATE_INTELLIGENCE,
+    RESEARCH_INTELLIGENCE_BRIEFS_FILE: DEFAULT_RESEARCH_INTELLIGENCE_BRIEFS,
 }
 """Initial contents for the four files owned by the runtime data directory."""
 
@@ -267,6 +270,12 @@ class JsonStore:
 
         return self.save_candidate_intelligence(value)
 
+    def load_research_intelligence_briefs(self) -> JsonObject:
+        return self._load_known_object(RESEARCH_INTELLIGENCE_BRIEFS_FILE, DEFAULT_RESEARCH_INTELLIGENCE_BRIEFS, required_list_key="briefs")
+
+    def save_research_intelligence_briefs(self, value: JsonObject) -> Path:
+        return self.write_json(RESEARCH_INTELLIGENCE_BRIEFS_FILE, value)
+
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
         """Return the process-wide re-entrant lock assigned to *path*."""
@@ -424,5 +433,7 @@ __all__ = [
     "JsonValue",
     "PROJECT_STATUS_FILE",
     "RESEARCH_LOGS_FILE",
+    "RESEARCH_INTELLIGENCE_BRIEFS_FILE",
+    "DEFAULT_RESEARCH_INTELLIGENCE_BRIEFS",
     "RUNTIME_JSON_DEFAULTS",
 ]

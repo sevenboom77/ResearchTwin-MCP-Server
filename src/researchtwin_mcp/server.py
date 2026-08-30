@@ -19,6 +19,7 @@ from researchtwin_mcp.tools.research_activity import register_research_activity_
 from researchtwin_mcp.tools.research_report import register_research_report_tool
 from researchtwin_mcp.tools.research_context import register_research_context_tool
 from researchtwin_mcp.tools.external_research import register_external_research_tool
+from researchtwin_mcp.tools.research_intelligence_brief import register_research_intelligence_brief_tools
 
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     register_research_report_tool(server, store)
     register_research_context_tool(server, store)
     register_external_research_tool(server)
+    register_research_intelligence_brief_tools(server, store)
     _forbid_unknown_tool_arguments(server)
     return server
 

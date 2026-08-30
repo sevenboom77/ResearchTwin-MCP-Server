@@ -34,6 +34,8 @@ EXPECTED_TOOL_NAMES = {
     "generate_research_report",
     "get_research_context",
     "search_external_research",
+    "record_research_intelligence_brief",
+    "list_research_intelligence_briefs",
 }
 
 if str(SRC_DIR) not in sys.path:

@@ -239,3 +239,6 @@ The current separation supports incremental upgrades without changing the agent-
 External search result != Candidate Intelligence != Project Knowledge.
 
 Discovery flow: Agent -> get context -> LLM creates targeted query -> search raw results -> Agent relevance reasoning -> record candidate -> lifecycle. Providers are currently arXiv and GitHub; news and web adapters may be added later. An optional `GITHUB_TOKEN` only improves rate limits and is never returned or persisted. No second LLM runs in this server.
+ResearchTwin Agent -> get_research_context -> project-aware search query -> search_external_research -> Agent relevance reasoning -> record_candidate_intelligence -> Agent brief composition -> record_research_intelligence_brief -> NAS history.
+
+A stored intelligence brief is a generated project communication artifact, not project knowledge. The MCP server has no scheduler; scheduled or proactive delivery is triggered by the upper Agent/platform layer.

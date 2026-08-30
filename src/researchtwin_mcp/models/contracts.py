@@ -80,6 +80,8 @@ CandidateLimit = Annotated[int, Field(ge=1, le=100)]
 ExternalSource = Literal["arxiv", "github"]
 ExternalSort = Literal["relevance", "recent"]
 ExternalResearchSourceType = Literal["paper", "github"]
+BriefType = Literal["daily", "weekly", "on_demand"]
+BriefTriggerType = Literal["manual", "scheduled"]
 
 
 class ContractModel(BaseModel):
@@ -265,6 +267,33 @@ class GetResearchContextSuccess(ContractModel):
     research_context: ResearchContext
 
 
+class ResearchIntelligenceBriefRecord(ContractModel):
+    brief_id: UUID
+    project_name: NonEmptyText
+    brief_type: BriefType
+    period_start: IsoDate
+    period_end: IsoDate
+    title: NonEmptyText
+    executive_summary: NonEmptyText
+    candidate_ids: list[NonEmptyText]
+    search_queries: list[NonEmptyText]
+    brief_markdown: NonEmptyText
+    trigger_type: BriefTriggerType
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecordResearchIntelligenceBriefSuccess(ContractModel):
+    status: Literal["success"]
+    brief: ResearchIntelligenceBriefRecord
+
+
+class ListResearchIntelligenceBriefsSuccess(ContractModel):
+    status: Literal["success"]
+    count: Annotated[int, Field(ge=0)]
+    briefs: list[ResearchIntelligenceBriefRecord]
+
+
 class GenerateResearchReportSuccess(ContractModel):
     """Successful ``generate_research_report`` output."""
 
@@ -326,6 +355,11 @@ __all__ = [
     "SearchExternalResearchSuccess",
     "ResearchContext",
     "GetResearchContextSuccess",
+    "BriefType",
+    "BriefTriggerType",
+    "ResearchIntelligenceBriefRecord",
+    "RecordResearchIntelligenceBriefSuccess",
+    "ListResearchIntelligenceBriefsSuccess",
     "GetProjectStatusSuccess",
     "IsoDate",
     "ListResearchActivitiesSuccess",

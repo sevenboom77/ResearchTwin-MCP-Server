@@ -329,3 +329,4 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 - [PyPI and BaiLian uvx preparation](docs/pypi_release.md)
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)
+Research Intelligence Briefs are Agent-generated, persisted communication artifacts; they are not project knowledge. The MCP server only validates, stores, and retrieves them—scheduling remains an upper-layer responsibility.
