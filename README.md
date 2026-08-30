@@ -330,3 +330,7 @@ Never commit real advisor messages, real paper content, chat transcripts, keys, 
 - [Demo flow](docs/demo_flow.md)
 - [Fictional sample data](examples/sample_data/README.md)
 Research Intelligence Briefs are Agent-generated, persisted communication artifacts; they are not project knowledge. The MCP server only validates, stores, and retrieves them—scheduling remains an upper-layer responsibility.
+
+Promoted Candidate does not automatically enter Project Knowledge. Only `prepare_project_knowledge` followed by explicit confirmation in `sync_project_knowledge_to_bailian` can perform a Bailian write.
+
+The sync adapter uses the official Bailian SDK and reads `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, `RESEARCHTWIN_BAILIAN_WORKSPACE_ID`, and `RESEARCHTWIN_BAILIAN_INDEX_ID` from the environment. Credentials and presigned URLs are never persisted.

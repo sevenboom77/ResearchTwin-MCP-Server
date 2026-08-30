@@ -35,6 +35,9 @@ EXPECTED_TOOL_NAMES = {
     "search_external_research",
     "record_research_intelligence_brief",
     "list_research_intelligence_briefs",
+    "prepare_project_knowledge",
+    "sync_project_knowledge_to_bailian",
+    "list_project_knowledge",
 }
 
 
@@ -79,7 +82,7 @@ def _error_text(result: CallToolResult) -> str:
 
 
 async def _exercise_client(url: str, title: str, data_directory: Path) -> None:
-    """Exercise discovery of all thirteen tools, persistence, reports, and error semantics."""
+    """Exercise discovery of all sixteen tools, persistence, reports, and error semantics."""
 
     # Local proxy/VPN environment variables can otherwise route 127.0.0.1 through a proxy.
     async with httpx2.AsyncClient(trust_env=False, timeout=8.0) as http_client:
@@ -90,7 +93,7 @@ async def _exercise_client(url: str, title: str, data_directory: Path) -> None:
                 discovered_names = {tool.name for tool in discovered.tools}
                 if discovered_names != EXPECTED_TOOL_NAMES:
                     raise RuntimeError(
-                        "MCP tool discovery did not return exactly the expected thirteen tools: "
+                        "MCP tool discovery did not return exactly the expected sixteen tools: "
                         f"{sorted(discovered_names)}"
                     )
                 if any(not tool.title or not tool.description for tool in discovered.tools):
@@ -270,7 +273,7 @@ def main() -> None:
                     process.wait(timeout=8)
 
     print(
-        "MCP Streamable HTTP smoke test passed: deployment tools/list probe plus thirteen tools discovered; "
+        "MCP Streamable HTTP smoke test passed: deployment tools/list probe plus sixteen tools discovered; "
         "persistence, report, and isError checks passed."
     )
 

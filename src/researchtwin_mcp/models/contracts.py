@@ -82,6 +82,8 @@ ExternalSort = Literal["relevance", "recent"]
 ExternalResearchSourceType = Literal["paper", "github"]
 BriefType = Literal["daily", "weekly", "on_demand"]
 BriefTriggerType = Literal["manual", "scheduled"]
+KnowledgeType = Literal["reference", "method", "finding", "note"]
+KnowledgeSyncStatus = Literal["prepared", "synced", "sync_failed"]
 
 
 class ContractModel(BaseModel):
@@ -259,6 +261,8 @@ class ResearchContext(ContractModel):
     recent_activities: list[dict[str, Any]]
     recent_advisor_instructions: list[dict[str, Any]]
     recent_candidates: list[CandidateIntelligenceRecord]
+    recent_intelligence_briefs: list[dict[str, Any]]
+    recent_project_knowledge: list[dict[str, Any]]
     context_summary_fields: dict[str, Any]
 
 
@@ -292,6 +296,39 @@ class ListResearchIntelligenceBriefsSuccess(ContractModel):
     status: Literal["success"]
     count: Annotated[int, Field(ge=0)]
     briefs: list[ResearchIntelligenceBriefRecord]
+
+class ProjectKnowledgeRecord(ContractModel):
+    knowledge_id: UUID
+    candidate_id: UUID
+    project_name: NonEmptyText
+    title: NonEmptyText
+    knowledge_type: KnowledgeType
+    knowledge_content: NonEmptyText
+    source_type: CandidateSourceType
+    source_url: str | None
+    validation_evidence: str | None
+    promotion_reason: str | None
+    local_artifact_path: NonEmptyText
+    sync_status: KnowledgeSyncStatus
+    remote_workspace_id: str | None
+    remote_index_id: str | None
+    remote_file_id: str | None
+    remote_job_id: str | None
+    last_sync_error: str | None
+    synced_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+class PrepareProjectKnowledgeSuccess(ContractModel):
+    status: Literal["success"]
+    knowledge: ProjectKnowledgeRecord
+class SyncProjectKnowledgeSuccess(ContractModel):
+    status: Literal["success"]
+    knowledge: ProjectKnowledgeRecord
+class ListProjectKnowledgeSuccess(ContractModel):
+    status: Literal["success"]
+    count: Annotated[int, Field(ge=0)]
+    knowledge: list[ProjectKnowledgeRecord]
 
 
 class GenerateResearchReportSuccess(ContractModel):
@@ -360,6 +397,7 @@ __all__ = [
     "ResearchIntelligenceBriefRecord",
     "RecordResearchIntelligenceBriefSuccess",
     "ListResearchIntelligenceBriefsSuccess",
+    "KnowledgeType", "KnowledgeSyncStatus", "ProjectKnowledgeRecord", "PrepareProjectKnowledgeSuccess", "SyncProjectKnowledgeSuccess", "ListProjectKnowledgeSuccess",
     "GetProjectStatusSuccess",
     "IsoDate",
     "ListResearchActivitiesSuccess",

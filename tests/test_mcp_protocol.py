@@ -41,6 +41,9 @@ EXPECTED_TOOL_NAMES = {
     "search_external_research",
     "record_research_intelligence_brief",
     "list_research_intelligence_briefs",
+    "prepare_project_knowledge",
+    "sync_project_knowledge_to_bailian",
+    "list_project_knowledge",
 }
 
 
@@ -181,8 +184,8 @@ def _structured_business_error(result: CallToolResult, expected_code: str) -> No
 
 
 @pytest.mark.anyio
-async def test_streamable_http_discovers_exactly_thirteen_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
-    """The live MCP endpoint advertises the thirteen expected typed tool contracts."""
+async def test_streamable_http_discovers_exactly_sixteen_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
+    """The live MCP endpoint advertises the sixteen expected typed tool contracts."""
 
     async with httpx2.AsyncClient(trust_env=False, timeout=8.0) as http_client:
         async with streamable_http_client(launched_server.url, http_client=http_client) as (read_stream, write_stream):
