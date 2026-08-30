@@ -353,7 +353,9 @@ def _validate_wheel_tags(metadata: WheelMetadata) -> None:
             raise BuildError(f"Malformed wheel compatibility tag {tag!r} in {metadata.path.name}") from exc
         normalized = platform_tag.lower()
         if normalized == "any":
-            if python_tag not in {"py3", "py312"} or abi_tag != "none":
+            # Some universal data packages (notably tzdata) publish the
+            # standard ``py2.py3-none-any`` tag; it is valid on CPython 3.12.
+            if python_tag not in {"py3", "py312", "py2.py3"} or abi_tag != "none":
                 raise BuildError(f"Wheel Python tag is not CPython 3.12 compatible: {tag!r} in {metadata.path.name}")
             continue
         if "win" in normalized or "macosx" in normalized or "musllinux" in normalized:
