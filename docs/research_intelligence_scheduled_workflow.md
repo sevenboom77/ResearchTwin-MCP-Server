@@ -16,16 +16,20 @@ Routine scheduled intelligence has a fixed trigger, quality gate, persistence se
 6. **Aggregate_external_results**: technical dedupe by arXiv source_id or GitHub source_id; no semantic merge.
 7. **LLM_relevance_filter**: use `prompts/research_intelligence_relevance_filter.md`; select at most max_candidates.
 8. **Condition_has_selected**: empty selection skips candidate iteration but still permits a short empty brief.
-9. **Iterator_selected**: call `record_candidate_intelligence` with status `discovered`; duplicate_candidate is a handled no-op branch.
-10. **LLM_compose_brief**: use `prompts/research_intelligence_brief_compose.md`.
-11. **MCP_record_research_intelligence_brief**: map project, dates, title, summary, markdown, candidate IDs, search queries, and `trigger_type=scheduled`.
-12. **End/output**: return brief Markdown and IDs.
+9. **Iterator_selected**: iterate each selected external item.
+10. **MCP_record_candidate_intelligence**: persist each relevant item as `discovered`; return `candidate_id` or a handled `duplicate_candidate` result.
+11. **Aggregate_candidate_records**: collect only newly created IDs; retain selected title/URL for duplicate references.
+12. **LLM_compose_brief**: use `prompts/research_intelligence_brief_compose.md`.
+13. **MCP_record_research_intelligence_brief**: map project, dates, title, summary, markdown, candidate IDs, search queries, and `trigger_type=scheduled`.
+14. **End/output**: return brief Markdown, brief ID, and candidate count.
 
-Candidate and brief data are persisted through MCP/NAS-backed storage. Project Knowledge still requires a separate promoted candidate, local prepare, and explicit user-confirmed Bailian sync.
+When `Condition_has_selected=false`, branch directly to `LLM_compose_empty_brief` (or reuse `LLM_compose_brief` with an empty-selection input), then to node 13 and End. The empty branch must never fabricate findings.
+
+Candidate and brief data are persisted through MCP/NAS-backed storage. Project Knowledge still requires a separate promoted candidate, local prepare, and explicit user-confirmed Bailian sync. External Search Result != Candidate != Intelligence Brief != Project Knowledge != Project Decision.
 
 ## Failure and retry
 
-Bound each iterator and LLM retry. A source failure is recorded while other sources continue. A duplicate candidate is skipped. A validation or MCP persistence error is surfaced with the node name; never auto-promote or auto-sync. Retry the whole scheduled run only through the platform scheduler, with daily duplicate protection enforced by `record_research_intelligence_brief`.
+Bound each iterator and LLM retry. A source failure is recorded while other sources continue. Prefer `recent_candidates` in the relevance filter to avoid duplicates. If the candidate MCP node returns `duplicate_candidate`, continue the run, do not create a duplicate, omit a new ID, and retain the selected title/URL as a historical reference. If the UI cannot branch on MCP `isError`, document this fallback as an implementation detail for console testing; do not claim duplicate is ordinary success. A validation or persistence error is surfaced with the node name; never auto-promote or auto-sync. Retry the whole scheduled run only through the platform scheduler, with daily duplicate protection enforced by `record_research_intelligence_brief`.
 
 ## Console build order and run-once demo
 
