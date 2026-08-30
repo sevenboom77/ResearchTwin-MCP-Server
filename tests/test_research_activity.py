@@ -20,7 +20,7 @@ def _record(
     date: str,
     activity_type: str = "experiment",
     title: str,
-    tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
 ) -> dict[str, object]:
     """Store one valid activity with focused test defaults."""
 
@@ -58,6 +58,71 @@ def test_record_activity_persists_across_store_reinstantiation(tmp_path: Path) -
         "count": 1,
         "activities": [result["record"]],
     }
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected_tags"),
+    [
+        (["ResearchTwin", "MCP", "NAS"], ["ResearchTwin", "MCP", "NAS"]),
+        (" ResearchTwin, MCP , NAS ", ["ResearchTwin", "MCP", "NAS"]),
+        ("ResearchTwin，MCP，NAS", ["ResearchTwin", "MCP", "NAS"]),
+        ("ResearchTwin,,MCP", ["ResearchTwin", "MCP"]),
+    ],
+)
+def test_record_activity_normalises_compatible_tag_inputs_to_persisted_arrays(
+    tmp_path: Path,
+    tags: list[str] | str,
+    expected_tags: list[str],
+) -> None:
+    """Both wire forms produce canonical arrays in the result and JSON store."""
+
+    data_dir = tmp_path / "runtime_data"
+    store = JsonStore(data_dir)
+    result = _record(
+        store,
+        date="2026-03-02",
+        title="Normalise compatible tag input",
+        tags=tags,
+    )
+
+    assert result["status"] == "success"
+    assert result["record"]["tags"] == expected_tags
+    persisted = store.read_json(RESEARCH_LOGS_FILE, {"activities": []})
+    assert persisted["activities"][0]["tags"] == expected_tags
+    listed = list_research_activities(JsonStore(data_dir))
+    assert listed["activities"][0]["tags"] == expected_tags
+
+
+def test_record_activity_rejects_an_all_empty_compatible_tag_string(tmp_path: Path) -> None:
+    """Compatibility parsing must not silently turn a blank scalar into valid data."""
+
+    result = _record(
+        JsonStore(tmp_path / "runtime_data"),
+        date="2026-03-02",
+        title="Reject blank compatible tags",
+        tags=" ， , ",
+    )
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "invalid_input"
+
+
+@pytest.mark.parametrize("tags", [["", "MCP"], ["  ", "MCP"], ["MCP", 1]])
+def test_record_activity_retains_strict_validation_for_explicit_tag_arrays(
+    tmp_path: Path,
+    tags: list[object],
+) -> None:
+    """Legacy scalar parsing must not weaken validation of standard array input."""
+
+    result = _record(
+        JsonStore(tmp_path / "runtime_data"),
+        date="2026-03-02",
+        title="Reject invalid explicit tag array",
+        tags=tags,  # type: ignore[arg-type]
+    )
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "invalid_input"
 
 
 def test_list_activities_filters_by_date_and_tag_in_reverse_chronological_order(tmp_path: Path) -> None:

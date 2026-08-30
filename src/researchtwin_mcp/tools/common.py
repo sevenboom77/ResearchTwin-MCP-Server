@@ -65,17 +65,31 @@ def optional_text(value: object | None, field_name: str) -> str | None:
     return required_text(value, field_name)
 
 
-def optional_string_list(value: object | None, field_name: str) -> list[str] | None:
-    """Validate and de-duplicate a list of nonempty strings while retaining order."""
+def optional_string_list(value: list[str] | str | None, field_name: str) -> list[str] | None:
+    """Normalise a list or comma-delimited string into unique nonempty strings.
+
+    MCP clients should send JSON arrays.  A small compatibility boundary also
+    accepts one string, splitting only on ASCII or full-width commas so natural
+    language containing spaces remains intact.  Persisted and returned values
+    always use the canonical list representation.
+    """
 
     if value is None:
         return None
-    if not isinstance(value, list):
-        raise ToolInputError("invalid_input", f"{field_name} must be a list of strings.")
+
+    if isinstance(value, str):
+        raw_values = [part.strip() for part in value.replace("，", ",").split(",")]
+        values_to_normalise = [part for part in raw_values if part]
+        if not values_to_normalise:
+            raise ToolInputError("invalid_input", f"{field_name} must contain at least one non-empty string.")
+    elif isinstance(value, list):
+        values_to_normalise = value
+    else:
+        raise ToolInputError("invalid_input", f"{field_name} must be a string or a list of strings.")
 
     values: list[str] = []
     seen: set[str] = set()
-    for item in value:
+    for item in values_to_normalise:
         item_text = required_text(item, field_name)
         marker = item_text.casefold()
         if marker not in seen:

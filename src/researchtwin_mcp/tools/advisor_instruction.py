@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from mcp.types import CallToolResult
 
 from researchtwin_mcp.models.contracts import (
+    CompatibleStringListInput,
     IsoDate,
     NonEmptyText,
     Priority,
@@ -36,7 +37,7 @@ def record_advisor_instruction(
     task: str,
     priority: str,
     deadline: str | None = None,
-    constraints: list[str] | None = None,
+    constraints: list[str] | str | None = None,
     follow_up: str | None = None,
     source_note: str | None = None,
 ) -> dict[str, Any]:
@@ -93,7 +94,7 @@ def register_advisor_instruction_tools(server: MCPServer, store: JsonStore) -> N
         task: NonEmptyText,
         priority: Priority,
         deadline: IsoDate | None = None,
-        constraints: list[NonEmptyText] | None = None,
+        constraints: CompatibleStringListInput | None = None,
         follow_up: NonEmptyText | None = None,
         source_note: NonEmptyText | None = None,
     ) -> Annotated[CallToolResult, RecordAdvisorInstructionSuccess]:

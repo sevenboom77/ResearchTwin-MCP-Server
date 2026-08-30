@@ -39,6 +39,25 @@ def test_advisor_instruction_is_stored_and_read_after_reinstantiation(tmp_path: 
     assert persisted[0]["constraints"] == ["Use the approved benchmark", "Include an ablation"]
 
 
+def test_advisor_instruction_normalises_string_constraints_to_persisted_arrays(tmp_path: Path) -> None:
+    """Legacy comma-delimited constraints retain canonical array persistence."""
+
+    data_dir = tmp_path / "runtime_data"
+    result = record_advisor_instruction(
+        JsonStore(data_dir),
+        instruction="Keep the validation evidence reproducible.",
+        task="Prepare reproducibility evidence",
+        priority="medium",
+        constraints="Use the approved benchmark，Include an ablation",
+    )
+
+    assert result["status"] == "success"
+    assert result["record"]["constraints"] == ["Use the approved benchmark", "Include an ablation"]
+    persisted = load_advisor_instructions(JsonStore(data_dir))
+    assert persisted[0]["constraints"] == ["Use the approved benchmark", "Include an ablation"]
+    assert isinstance(persisted[0]["constraints"], list)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "error_code"),
     [

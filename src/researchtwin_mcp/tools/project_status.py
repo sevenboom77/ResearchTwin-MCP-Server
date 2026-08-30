@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from mcp.types import CallToolResult
 
 from researchtwin_mcp.models.contracts import (
+    CompatibleStringListInput,
     GetProjectStatusSuccess,
     MergeMode,
     NonEmptyText,
@@ -35,10 +36,10 @@ def update_project_status(
     *,
     project_name: str,
     current_stage: str,
-    completed_tasks: list[str] | None = None,
-    pending_tasks: list[str] | None = None,
-    risks: list[str] | None = None,
-    important_decisions: list[str] | None = None,
+    completed_tasks: list[str] | str | None = None,
+    pending_tasks: list[str] | str | None = None,
+    risks: list[str] | str | None = None,
+    important_decisions: list[str] | str | None = None,
     merge_mode: str = "merge",
 ) -> dict[str, Any]:
     """Create or update the current research-project status durably."""
@@ -117,10 +118,10 @@ def register_project_status_tools(server: MCPServer, store: JsonStore) -> None:
     def update_status_tool(
         project_name: NonEmptyText,
         current_stage: NonEmptyText,
-        completed_tasks: list[NonEmptyText] | None = None,
-        pending_tasks: list[NonEmptyText] | None = None,
-        risks: list[NonEmptyText] | None = None,
-        important_decisions: list[NonEmptyText] | None = None,
+        completed_tasks: CompatibleStringListInput | None = None,
+        pending_tasks: CompatibleStringListInput | None = None,
+        risks: CompatibleStringListInput | None = None,
+        important_decisions: CompatibleStringListInput | None = None,
         merge_mode: MergeMode = "merge",
     ) -> Annotated[CallToolResult, UpdateProjectStatusSuccess]:
         payload = update_project_status(

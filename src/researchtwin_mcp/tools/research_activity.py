@@ -11,6 +11,7 @@ from mcp.types import CallToolResult
 from researchtwin_mcp.models.contracts import (
     ActivityLimit,
     ActivityType,
+    CompatibleStringListInput,
     IsoDate,
     ListResearchActivitiesSuccess,
     NonEmptyText,
@@ -44,7 +45,7 @@ def record_research_activity(
     result: str | None = None,
     problem: str | None = None,
     next_step: str | None = None,
-    tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
     source: str | None = None,
 ) -> dict[str, Any]:
     """Persist one concrete research activity and return its generated UUID record."""
@@ -143,7 +144,7 @@ def register_research_activity_tools(server: MCPServer, store: JsonStore) -> Non
         result: NonEmptyText | None = None,
         problem: NonEmptyText | None = None,
         next_step: NonEmptyText | None = None,
-        tags: list[NonEmptyText] | None = None,
+        tags: CompatibleStringListInput | None = None,
         source: NonEmptyText | None = None,
     ) -> Annotated[CallToolResult, RecordResearchActivitySuccess]:
         payload = record_research_activity(

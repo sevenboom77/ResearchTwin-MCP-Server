@@ -135,6 +135,20 @@ def _non_null_schema(schema: dict[str, object]) -> dict[str, object]:
     raise AssertionError(f"No non-null schema arm found: {schema}")
 
 
+def _schema_types(schema: dict[str, object]) -> set[str]:
+    """Return the JSON value types accepted by a union field schema."""
+
+    alternatives = schema.get("anyOf")
+    if not isinstance(alternatives, list):
+        field_type = schema.get("type")
+        return {field_type} if isinstance(field_type, str) else set()
+    return {
+        candidate["type"]
+        for candidate in alternatives
+        if isinstance(candidate, dict) and isinstance(candidate.get("type"), str)
+    }
+
+
 def _success_payload(result: CallToolResult) -> dict[str, object]:
     assert result.is_error is False, result.model_dump(mode="json")
     assert isinstance(result.structured_content, dict), result.model_dump(mode="json")
@@ -193,6 +207,39 @@ async def test_streamable_http_discovers_exactly_six_strictly_schematized_tools(
         "other",
     ]
     assert _non_null_schema(tools["record_research_activity"].input_schema["properties"]["date"])["format"] == "date"
+
+    compatible_list_fields = {
+        "record_research_activity": ("tags",),
+        "update_project_status": ("completed_tasks", "pending_tasks", "risks", "important_decisions"),
+        "record_advisor_instruction": ("constraints",),
+    }
+    for tool_name, fields in compatible_list_fields.items():
+        for field in fields:
+            field_schema = tools[tool_name].input_schema["properties"][field]
+            assert _schema_types(field_schema) == {"array", "string", "null"}
+            assert field not in tools[tool_name].input_schema.get("required", [])
+            alternatives = field_schema["anyOf"]
+            assert isinstance(alternatives, list)
+            array_schema = next(candidate for candidate in alternatives if candidate.get("type") == "array")
+            string_schema = next(candidate for candidate in alternatives if candidate.get("type") == "string")
+            assert array_schema["items"]["minLength"] == 1
+            assert string_schema["minLength"] == 1
+
+    assert _schema_types(tools["list_research_activities"].input_schema["properties"]["tag"]) == {
+        "string",
+        "null",
+    }
+    assert tools["record_research_activity"].output_schema["$defs"]["ResearchActivityRecord"]["properties"][
+        "tags"
+    ]["type"] == "array"
+    status_output_properties = tools["update_project_status"].output_schema["$defs"]["ProjectStatusRecord"][
+        "properties"
+    ]
+    for field in ("completed_tasks", "pending_tasks", "risks", "important_decisions"):
+        assert status_output_properties[field]["type"] == "array"
+    assert tools["record_advisor_instruction"].output_schema["$defs"]["AdvisorInstructionRecord"]["properties"][
+        "constraints"
+    ]["type"] == "array"
 
     assert "required" not in tools["list_research_activities"].input_schema
     list_limit = tools["list_research_activities"].input_schema["properties"]["limit"]
@@ -310,6 +357,162 @@ async def test_streamable_http_calls_all_six_tools_and_persists_results(launched
     report_path = launched_server.data_dir / str(report["report_path"])
     assert report_path.is_file()
     assert report_path.read_text(encoding="utf-8") == report["report"]
+
+
+@pytest.mark.anyio
+async def test_streamable_http_normalises_compatible_string_lists_and_persists_arrays(
+    launched_server: LaunchedServer,
+) -> None:
+    """A real MCP client succeeds on its first scalar-list call and receives arrays back."""
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    async with httpx2.AsyncClient(trust_env=False, timeout=8.0) as http_client:
+        async with streamable_http_client(launched_server.url, http_client=http_client) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                activity = _success_payload(
+                    await session.call_tool(
+                        "record_research_activity",
+                        {
+                            "date": today,
+                            "activity_type": "experiment",
+                            "title": "Compatibility protocol activity",
+                            "description": "Uses a scalar string for a canonical tag array.",
+                            "tags": "ResearchTwin, MCP，NAS",
+                        },
+                    )
+                )
+                assert activity["record"]["tags"] == ["ResearchTwin", "MCP", "NAS"]
+
+                activities = _success_payload(
+                    await session.call_tool("list_research_activities", {"tag": "MCP"})
+                )
+                assert activities["activities"][0]["tags"] == ["ResearchTwin", "MCP", "NAS"]
+
+                null_tag_activity = _success_payload(
+                    await session.call_tool(
+                        "record_research_activity",
+                        {
+                            "date": today,
+                            "activity_type": "experiment",
+                            "title": "Nullable compatibility protocol activity",
+                            "description": "Exercises the original optional null semantics.",
+                            "tags": None,
+                        },
+                    )
+                )
+                assert null_tag_activity["record"]["tags"] == []
+
+                updated_status = _success_payload(
+                    await session.call_tool(
+                        "update_project_status",
+                        {
+                            "project_name": "ResearchTwin compatibility test",
+                            "current_stage": "MCP verification",
+                            "completed_tasks": "Publish schema, Verify persistence",
+                            "pending_tasks": "Refresh skill，Run acceptance",
+                            "risks": "Schema drift, Deployment mismatch",
+                            "important_decisions": "Preserve arrays，Use compatibility boundary",
+                        },
+                    )
+                )
+                expected_status_lists = {
+                    "completed_tasks": ["Publish schema", "Verify persistence"],
+                    "pending_tasks": ["Refresh skill", "Run acceptance"],
+                    "risks": ["Schema drift", "Deployment mismatch"],
+                    "important_decisions": ["Preserve arrays", "Use compatibility boundary"],
+                }
+                for field, expected in expected_status_lists.items():
+                    assert updated_status["project_status"][field] == expected
+
+                merged_status = _success_payload(
+                    await session.call_tool(
+                        "update_project_status",
+                        {
+                            "project_name": "ResearchTwin compatibility test",
+                            "current_stage": "MCP verification",
+                            "completed_tasks": ["Verify persistence", "Publish acceptance evidence"],
+                            "pending_tasks": ["Run acceptance", "Review handoff"],
+                            "risks": ["Deployment mismatch", "Schema cache"],
+                            "important_decisions": ["Use compatibility boundary", "Keep output canonical"],
+                        },
+                    )
+                )
+                expected_status_lists = {
+                    "completed_tasks": ["Publish schema", "Verify persistence", "Publish acceptance evidence"],
+                    "pending_tasks": ["Refresh skill", "Run acceptance", "Review handoff"],
+                    "risks": ["Schema drift", "Deployment mismatch", "Schema cache"],
+                    "important_decisions": [
+                        "Preserve arrays",
+                        "Use compatibility boundary",
+                        "Keep output canonical",
+                    ],
+                }
+                for field, expected in expected_status_lists.items():
+                    assert merged_status["project_status"][field] == expected
+
+                null_status = _success_payload(
+                    await session.call_tool(
+                        "update_project_status",
+                        {
+                            "project_name": "ResearchTwin compatibility test",
+                            "current_stage": "MCP verification",
+                            "completed_tasks": None,
+                            "pending_tasks": None,
+                            "risks": None,
+                            "important_decisions": None,
+                        },
+                    )
+                )
+                for field, expected in expected_status_lists.items():
+                    assert null_status["project_status"][field] == expected
+
+                current_status = _success_payload(await session.call_tool("get_project_status", {}))
+                for field, expected in expected_status_lists.items():
+                    assert current_status["project_status"][field] == expected
+
+                instruction = _success_payload(
+                    await session.call_tool(
+                        "record_advisor_instruction",
+                        {
+                            "instruction": "Keep the acceptance evidence.",
+                            "task": "Prepare compatibility evidence",
+                            "priority": "high",
+                            "constraints": "Use protocol tests，Keep NAS data canonical",
+                        },
+                    )
+                )
+                assert instruction["record"]["constraints"] == [
+                    "Use protocol tests",
+                    "Keep NAS data canonical",
+                ]
+
+                null_constraint_instruction = _success_payload(
+                    await session.call_tool(
+                        "record_advisor_instruction",
+                        {
+                            "instruction": "Record an optional empty constraint set.",
+                            "task": "Exercise nullable constraints",
+                            "priority": "medium",
+                            "constraints": None,
+                        },
+                    )
+                )
+                assert null_constraint_instruction["record"]["constraints"] == []
+
+    research_logs = json.loads((launched_server.data_dir / "research_logs.json").read_text(encoding="utf-8"))
+    project_status = json.loads((launched_server.data_dir / "project_status.json").read_text(encoding="utf-8"))
+    advisor_instructions = json.loads(
+        (launched_server.data_dir / "advisor_instructions.json").read_text(encoding="utf-8")
+    )
+    assert research_logs["activities"][0]["tags"] == ["ResearchTwin", "MCP", "NAS"]
+    for field, expected in expected_status_lists.items():
+        assert project_status[field] == expected
+    assert advisor_instructions["instructions"][0]["constraints"] == [
+        "Use protocol tests",
+        "Keep NAS data canonical",
+    ]
 
 
 @pytest.mark.anyio

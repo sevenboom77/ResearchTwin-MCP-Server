@@ -9,7 +9,7 @@ objects with the correct ``isError`` semantics.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Mapping, TypeVar
+from typing import Annotated, Literal, Mapping, TypeAlias, TypeVar
 from uuid import UUID
 
 from mcp.types import CallToolResult, TextContent
@@ -28,6 +28,14 @@ def _validate_real_iso_date(value: str) -> str:
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
 """A required, non-blank-at-the-schema-level text field."""
+
+CompatibleStringListInput: TypeAlias = list[NonEmptyText] | NonEmptyText
+"""An MCP input that accepts either a string list or one legacy comma-delimited string.
+
+Tool implementations normalise this compatibility type to ``list[str]`` before
+domain logic or persistence.  It is deliberately input-only: result contracts
+continue to expose the canonical JSON-array representation.
+"""
 
 IsoDate = Annotated[
     str,
@@ -202,6 +210,7 @@ __all__ = [
     "ActivityLimit",
     "ActivityType",
     "AdvisorInstructionRecord",
+    "CompatibleStringListInput",
     "ContractModel",
     "GenerateResearchReportSuccess",
     "GetProjectStatusSuccess",
