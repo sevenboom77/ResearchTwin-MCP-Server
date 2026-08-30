@@ -11,7 +11,9 @@ import pytest
 from researchtwin_mcp.models import StorageError
 from researchtwin_mcp.storage import (
     ADVISOR_INSTRUCTIONS_FILE,
+    CANDIDATE_INTELLIGENCE_FILE,
     DEFAULT_ADVISOR_INSTRUCTIONS,
+    DEFAULT_CANDIDATE_INTELLIGENCE,
     DEFAULT_PROJECT_STATUS,
     DEFAULT_RESEARCH_LOGS,
     PROJECT_STATUS_FILE,
@@ -29,6 +31,9 @@ def test_initialisation_creates_runtime_defaults(tmp_path: Path) -> None:
     assert json.loads((data_dir / RESEARCH_LOGS_FILE).read_text(encoding="utf-8")) == DEFAULT_RESEARCH_LOGS
     assert json.loads((data_dir / PROJECT_STATUS_FILE).read_text(encoding="utf-8")) == DEFAULT_PROJECT_STATUS
     assert json.loads((data_dir / ADVISOR_INSTRUCTIONS_FILE).read_text(encoding="utf-8")) == DEFAULT_ADVISOR_INSTRUCTIONS
+    assert json.loads((data_dir / CANDIDATE_INTELLIGENCE_FILE).read_text(encoding="utf-8")) == (
+        DEFAULT_CANDIDATE_INTELLIGENCE
+    )
 
 
 def test_missing_file_returns_and_initialises_default(tmp_path: Path) -> None:

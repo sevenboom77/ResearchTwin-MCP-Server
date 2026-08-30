@@ -1,6 +1,6 @@
 # MCP Tools
 
-ResearchTwin exposes six MCP tools. Their names are lower_snake_case and their descriptions are written so an agent can decide when a persistent action is appropriate.
+ResearchTwin exposes nine MCP tools. Their names are lower_snake_case and their descriptions are written so an agent can decide when a persistent action is appropriate.
 
 ## Shared conventions
 
@@ -35,6 +35,32 @@ At the MCP protocol level, every handled business failure is returned with `Call
 - String-list entries must be non-empty strings.
 - Enum values must use their listed lowercase canonical values.
 - Operational JSON is stored under runtime_data/ by default and must not be committed.
+
+### Candidate intelligence lifecycle
+
+Candidate intelligence is an external-candidate ledger, not project knowledge.
+It stores a paper, repository, news item, web item, advisor lead, or other
+potentially relevant item only after an agent or researcher explicitly records
+it. The server does not search external sources, infer semantic duplicates, or
+write a candidate to BaiLian, ResearchTwin_Docs, or any other knowledge base.
+
+Every new candidate starts as `discovered`. The allowed status changes are:
+
+| Current status | Allowed requested status | Meaning |
+| --- | --- | --- |
+| discovered | shortlisted, rejected | Captured but not yet triaged. |
+| shortlisted | validated, rejected | Selected for closer review. |
+| validated | promoted, rejected | Supporting evidence was recorded and reviewed. |
+| promoted | promoted | User-approved; the repeated status is idempotent. |
+| rejected | rejected | Retained as a rejected record; the repeated status is idempotent. |
+
+There is no direct `discovered` or `shortlisted` to `promoted` transition.
+`promoted` records user approval and its evidence trail only; it does not make
+the candidate an independently verified fact and does not trigger a
+knowledge-base write. Rejected candidates are retained rather than physically
+deleted, so the same item is not repeatedly surfaced. `confidence`, when present, is an
+agent or researcher relevance/recommendation estimate from 0 through 1; it is
+not a claim that the source is true or independently verified.
 
 ## 1. record_research_activity
 
@@ -281,7 +307,194 @@ The server stores structured fields; it does not perform LLM-based natural-langu
 }
 ~~~
 
-## 6. generate_research_report
+## 6. record_candidate_intelligence
+
+**Description:** Persist one newly discovered external candidate that may be
+relevant to the research project. Use it for a paper, GitHub repository, news
+item, web item, advisor lead, or another externally sourced lead that should be
+reviewed later.
+
+This tool creates a candidate ledger entry; it does not validate, adopt, or
+write the item into a project knowledge base. New records must start as
+`discovered`.
+
+### Inputs
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| title | string | Yes | Non-empty title of the external candidate. |
+| source_type | string | Yes | One of paper, github, news, web, advisor, or other. |
+| source_url | string | No | Optional source URL. |
+| summary | string | Yes | Concise description of the candidate. |
+| relevance_reason | string | Yes | Why it may matter to the project. |
+| related_project_issue | string | No | Issue, risk, task, or question to which it relates. |
+| confidence | number | No | Relevance/recommendation estimate from 0 through 1, inclusive. |
+| user_note | string | No | Optional researcher note retained with the candidate. |
+| status | string | No | Defaults to discovered. This v1 accepts only discovered when creating a new candidate. |
+
+The server generates `candidate_id`, `created_at`, and `updated_at`. It also
+initializes `validation_evidence` and `promotion_reason` to null; use
+`update_candidate_status` to retain either later.
+
+### Successful output
+
+~~~json
+{
+  "status": "success",
+  "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+  "record": {
+    "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+    "title": "A fictional recurrent-policy benchmark",
+    "source_type": "paper",
+    "source_url": "https://example.invalid/recurrent-policy-benchmark",
+    "summary": "A candidate benchmark for evaluating recurrent policies.",
+    "relevance_reason": "It may clarify the project's generalization comparison.",
+    "related_project_issue": "Evaluate recurrent-policy generalization",
+    "status": "discovered",
+    "confidence": 0.82,
+    "user_note": "Review after the next experiment run.",
+    "validation_evidence": null,
+    "promotion_reason": null,
+    "created_at": "2026-08-20T10:00:00+00:00",
+    "updated_at": "2026-08-20T10:00:00+00:00"
+  }
+}
+~~~
+
+Duplicate detection is intentionally conservative: when the new record has a
+`source_url`, a case-insensitive, whitespace-normalized matching title plus the
+same trimmed URL is rejected as `duplicate_candidate`. When the new record has
+no URL, the same normalized title plus `source_type` is rejected. No semantic
+or LLM-based deduplication occurs.
+
+### Example call arguments
+
+~~~json
+{
+  "title": "A fictional recurrent-policy benchmark",
+  "source_type": "paper",
+  "source_url": "https://example.invalid/recurrent-policy-benchmark",
+  "summary": "A candidate benchmark for evaluating recurrent policies.",
+  "relevance_reason": "It may clarify the project's generalization comparison.",
+  "related_project_issue": "Evaluate recurrent-policy generalization",
+  "confidence": 0.82,
+  "user_note": "Review after the next experiment run."
+}
+~~~
+
+## 7. list_candidate_intelligence
+
+**Description:** Retrieve recently recorded candidate intelligence without
+presenting it as validated or adopted project knowledge.
+
+### Inputs
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| status | string | No | One of discovered, shortlisted, validated, promoted, or rejected. |
+| source_type | string | No | One of paper, github, news, web, advisor, or other. |
+| related_project_issue | string | No | Case-insensitive substring filter against the stored related issue. |
+| limit | integer | No | Default 20; valid range 1 through 100. |
+
+### Successful output
+
+~~~json
+{
+  "status": "success",
+  "count": 1,
+  "candidates": [
+    {
+      "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+      "title": "A fictional recurrent-policy benchmark",
+      "source_type": "paper",
+      "source_url": "https://example.invalid/recurrent-policy-benchmark",
+      "summary": "A candidate benchmark for evaluating recurrent policies.",
+      "relevance_reason": "It may clarify the project's generalization comparison.",
+      "related_project_issue": "Evaluate recurrent-policy generalization",
+      "status": "shortlisted",
+      "confidence": 0.82,
+      "user_note": "Review after the next experiment run.",
+      "validation_evidence": null,
+      "promotion_reason": null,
+      "created_at": "2026-08-20T10:00:00+00:00",
+      "updated_at": "2026-08-20T10:05:00+00:00"
+    }
+  ]
+}
+~~~
+
+Results are newest first by `created_at`. A query with no matches returns
+success, `count` 0, and an empty `candidates` array.
+
+### Example call arguments
+
+~~~json
+{
+  "status": "shortlisted",
+  "source_type": "paper",
+  "related_project_issue": "generalization",
+  "limit": 20
+}
+~~~
+
+## 8. update_candidate_status
+
+**Description:** Advance a stored candidate through the strict lifecycle while
+retaining an optional note, validation evidence, or promotion reason.
+
+### Inputs
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| candidate_id | UUID string | Yes | Server-generated candidate identifier. |
+| status | string | Yes | Requested lifecycle status; it must be an allowed transition from the current status. |
+| user_note | string | No | Optional researcher note to retain. |
+| validation_evidence | string | No | Optional evidence or review result retained with the record. |
+| promotion_reason | string | No | Optional reason for approval, normally supplied when requesting promoted. |
+
+### Successful output
+
+~~~json
+{
+  "status": "success",
+  "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+  "record": {
+    "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+    "title": "A fictional recurrent-policy benchmark",
+    "source_type": "paper",
+    "source_url": "https://example.invalid/recurrent-policy-benchmark",
+    "summary": "A candidate benchmark for evaluating recurrent policies.",
+    "relevance_reason": "It may clarify the project's generalization comparison.",
+    "related_project_issue": "Evaluate recurrent-policy generalization",
+    "status": "promoted",
+    "confidence": 0.82,
+    "user_note": "Approved for the project's future review queue.",
+    "validation_evidence": "The fictional benchmark covers the required comparison setting.",
+    "promotion_reason": "The researcher approved retaining this lead for follow-up.",
+    "created_at": "2026-08-20T10:00:00+00:00",
+    "updated_at": "2026-08-20T10:10:00+00:00"
+  }
+}
+~~~
+
+An unknown ID returns `candidate_not_found`; a skipped or backward lifecycle
+change returns `invalid_candidate_transition`. Supplying `promoted` for an
+already promoted record or `rejected` for an already rejected record is allowed
+and keeps the lifecycle state idempotent. Neither update writes to an external
+knowledge base.
+
+### Example call arguments
+
+~~~json
+{
+  "candidate_id": "b091beaf-7b55-42d3-962f-78d937f901f6",
+  "status": "promoted",
+  "validation_evidence": "The fictional benchmark covers the required comparison setting.",
+  "promotion_reason": "The researcher approved retaining this lead for follow-up."
+}
+~~~
+
+## 9. generate_research_report
 
 **Description:** Generate a weekly, meeting, or stage research report from persisted research activities, advisor instructions, and project status. The server returns Markdown and saves the same report under the configured data directory's reports folder.
 
@@ -319,7 +532,7 @@ The report has these eight sections:
 7. Important Project Decisions
 8. Next-step Plan
 
-Activities are selected by the inclusive activity-date range. Advisor instructions are selected only when the date in each record's `created_at` timestamp falls within the same inclusive range; a missing or malformed `created_at` timestamp is omitted. The current project-status snapshot is incorporated in full as current context even if it was updated outside the report range. If no activities match, generation still succeeds and uses explicit “none recorded” style content instead of crashing.
+Activities are selected by the inclusive activity-date range. Advisor instructions are selected only when the date in each record's `created_at` timestamp falls within the same inclusive range; a missing or malformed `created_at` timestamp is omitted. The current project-status snapshot is incorporated in full as current context even if it was updated outside the report range. If no activities match, generation still succeeds and uses explicit “none recorded” style content instead of crashing. Candidate intelligence, including promoted candidates, is not read by report generation and is not written to a knowledge base.
 
 ### Example call arguments
 
@@ -344,4 +557,4 @@ Invalid input is a controlled tool result, not a server crash:
 }
 ~~~
 
-Other representative error codes include invalid_date, invalid_enum, invalid_limit, invalid_input, duplicate_activity, and storage failures. Agents should correct the input when possible, surface a concise explanation to the researcher when necessary, and never fabricate a successful persistence result.
+Other representative error codes include invalid_date, invalid_enum, invalid_limit, invalid_input, duplicate_activity, duplicate_candidate, candidate_not_found, invalid_candidate_transition, and storage failures. Agents should correct the input when possible, surface a concise explanation to the researcher when necessary, and never fabricate a successful persistence result.

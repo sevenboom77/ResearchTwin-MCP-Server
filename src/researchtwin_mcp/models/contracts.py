@@ -13,7 +13,7 @@ from typing import Annotated, Literal, Mapping, TypeAlias, TypeVar
 from uuid import UUID
 
 from mcp.types import CallToolResult, TextContent
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 from researchtwin_mcp.models.schemas import is_iso_date
 
@@ -23,6 +23,14 @@ def _validate_real_iso_date(value: str) -> str:
 
     if not is_iso_date(value):
         raise ValueError("must be a real ISO date in YYYY-MM-DD format")
+    return value
+
+
+def _reject_non_numeric_confidence(value: object) -> object:
+    """Keep non-numeric JSON values out of the candidate-confidence boundary."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("must be a number between 0 and 1")
     return value
 
 
@@ -62,6 +70,12 @@ Priority = Literal["low", "medium", "high", "critical"]
 MergeMode = Literal["merge", "replace"]
 ReportType = Literal["weekly", "meeting", "stage"]
 ActivityLimit = Annotated[int, Field(ge=1, le=100)]
+CandidateSourceType = Literal["paper", "github", "news", "web", "advisor", "other"]
+CandidateStatus = Literal["discovered", "shortlisted", "validated", "promoted", "rejected"]
+# Keep ``Field`` before the custom pre-validator so the published MCP JSON
+# schema uses the standard ``minimum`` / ``maximum`` keywords.
+CandidateConfidence = Annotated[float, Field(ge=0, le=1), BeforeValidator(_reject_non_numeric_confidence)]
+CandidateLimit = Annotated[int, Field(ge=1, le=100)]
 
 
 class ContractModel(BaseModel):
@@ -123,6 +137,25 @@ class AdvisorInstructionRecord(ContractModel):
     updated_at: datetime
 
 
+class CandidateIntelligenceRecord(ContractModel):
+    """One externally discovered candidate, kept separate from project knowledge."""
+
+    candidate_id: UUID
+    title: NonEmptyText
+    source_type: CandidateSourceType
+    source_url: str | None
+    summary: NonEmptyText
+    relevance_reason: NonEmptyText
+    related_project_issue: str | None
+    status: CandidateStatus
+    confidence: CandidateConfidence | None
+    user_note: str | None
+    validation_evidence: str | None
+    promotion_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class RecordResearchActivitySuccess(ContractModel):
     """Successful ``record_research_activity`` output."""
 
@@ -160,6 +193,30 @@ class RecordAdvisorInstructionSuccess(ContractModel):
     status: Literal["success"]
     instruction_id: UUID
     record: AdvisorInstructionRecord
+
+
+class RecordCandidateIntelligenceSuccess(ContractModel):
+    """Successful ``record_candidate_intelligence`` output."""
+
+    status: Literal["success"]
+    candidate_id: UUID
+    record: CandidateIntelligenceRecord
+
+
+class ListCandidateIntelligenceSuccess(ContractModel):
+    """Successful ``list_candidate_intelligence`` output."""
+
+    status: Literal["success"]
+    count: Annotated[int, Field(ge=0)]
+    candidates: list[CandidateIntelligenceRecord]
+
+
+class UpdateCandidateStatusSuccess(ContractModel):
+    """Successful ``update_candidate_status`` output."""
+
+    status: Literal["success"]
+    candidate_id: UUID
+    record: CandidateIntelligenceRecord
 
 
 class GenerateResearchReportSuccess(ContractModel):
@@ -210,22 +267,30 @@ __all__ = [
     "ActivityLimit",
     "ActivityType",
     "AdvisorInstructionRecord",
+    "CandidateConfidence",
+    "CandidateIntelligenceRecord",
+    "CandidateLimit",
+    "CandidateSourceType",
+    "CandidateStatus",
     "CompatibleStringListInput",
     "ContractModel",
     "GenerateResearchReportSuccess",
     "GetProjectStatusSuccess",
     "IsoDate",
     "ListResearchActivitiesSuccess",
+    "ListCandidateIntelligenceSuccess",
     "MergeMode",
     "NonEmptyText",
     "Priority",
     "ProjectStatusRecord",
     "RecordAdvisorInstructionSuccess",
+    "RecordCandidateIntelligenceSuccess",
     "RecordResearchActivitySuccess",
     "ReportType",
     "ResearchActivityRecord",
     "ToolFailure",
     "UpdateProjectStatusSuccess",
+    "UpdateCandidateStatusSuccess",
     "error_tool_result",
     "result_is_error",
     "success_tool_result",

@@ -1,6 +1,6 @@
 """Dedicated stdio entry point for uvx-hosted MCP clients.
 
-This module intentionally starts the same six-tool server with the MCP SDK's
+This module intentionally starts the same nine-tool server with the MCP SDK's
 stdio transport. It opens no HTTP listener and writes configuration failures to
 stderr so stdout remains reserved for MCP JSON-RPC messages.
 """

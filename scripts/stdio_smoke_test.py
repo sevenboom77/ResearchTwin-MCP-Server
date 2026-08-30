@@ -18,6 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOL_NAMES = {
     "record_research_activity",
     "list_research_activities",
+    "record_candidate_intelligence",
+    "list_candidate_intelligence",
+    "update_candidate_status",
     "update_project_status",
     "get_project_status",
     "record_advisor_instruction",
@@ -72,7 +75,7 @@ async def _exercise_stdio_server(command: Path, data_directory: Path) -> None:
             discovered_names = {tool.name for tool in discovered.tools}
             if discovered_names != EXPECTED_TOOL_NAMES:
                 raise RuntimeError(
-                    "MCP stdio tools/list did not return exactly the expected six tools: "
+                    "MCP stdio tools/list did not return exactly the expected nine tools: "
                     f"{sorted(discovered_names)}"
                 )
             if any(not tool.title or not tool.description for tool in discovered.tools):
@@ -138,7 +141,7 @@ def main() -> None:
         anyio.run(_exercise_stdio_server, command, Path(data_directory))
 
     print(
-        "MCP stdio smoke test passed: the dedicated console entry point initialized, discovered six tools, "
+        "MCP stdio smoke test passed: the dedicated console entry point initialized, discovered nine tools, "
         "persisted and read back a temporary activity, and returned isError for invalid input."
     )
 

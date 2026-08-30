@@ -8,6 +8,7 @@ that each tool validates input consistently before changing stored state.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from math import isfinite
 from typing import Final, Mapping, NotRequired, TypedDict, cast
 from uuid import UUID, uuid4
 
@@ -35,6 +36,16 @@ MERGE_MODES: Final[frozenset[str]] = frozenset({"merge", "replace"})
 
 REPORT_TYPES: Final[frozenset[str]] = frozenset({"weekly", "meeting", "stage"})
 """Allowed report formats."""
+
+CANDIDATE_SOURCE_TYPES: Final[frozenset[str]] = frozenset(
+    {"paper", "github", "news", "web", "advisor", "other"}
+)
+"""Allowed origins for a candidate intelligence record."""
+
+CANDIDATE_STATUSES: Final[frozenset[str]] = frozenset(
+    {"discovered", "shortlisted", "validated", "promoted", "rejected"}
+)
+"""Lifecycle states for unadopted and user-approved candidate intelligence."""
 
 
 class ResearchActivity(TypedDict):
@@ -80,6 +91,30 @@ class ProjectStatus(TypedDict, total=False):
     important_decisions: list[str]
     created_at: str
     updated_at: str
+
+
+class CandidateIntelligence(TypedDict):
+    """The JSON shape written for one candidate intelligence record.
+
+    A candidate is intentionally distinct from formal project knowledge.  A
+    ``promoted`` value records user approval and evidence only; it does not
+    imply a knowledge-base write occurred.
+    """
+
+    candidate_id: str
+    title: str
+    source_type: str
+    summary: str
+    relevance_reason: str
+    status: str
+    created_at: str
+    updated_at: str
+    source_url: NotRequired[str | None]
+    related_project_issue: NotRequired[str | None]
+    confidence: NotRequired[float | None]
+    user_note: NotRequired[str | None]
+    validation_evidence: NotRequired[str | None]
+    promotion_reason: NotRequired[str | None]
 
 
 class StructuredError(Exception):
@@ -253,6 +288,39 @@ def validate_report_type(value: object) -> str:
     return validate_enum(value, REPORT_TYPES, field_name="report_type")
 
 
+def validate_candidate_source_type(value: object) -> str:
+    """Validate and normalise a candidate intelligence source type."""
+
+    return validate_enum(value, CANDIDATE_SOURCE_TYPES, field_name="source_type")
+
+
+def validate_candidate_status(value: object) -> str:
+    """Validate and normalise a candidate intelligence lifecycle status."""
+
+    return validate_enum(value, CANDIDATE_STATUSES, field_name="status")
+
+
+def validate_confidence(value: object | None) -> float | None:
+    """Validate an optional finite relevance-confidence value in the inclusive 0..1 range."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(
+            "invalid_input",
+            "confidence must be a number between 0 and 1.",
+            details={"field": "confidence"},
+        )
+    confidence = float(value)
+    if not isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValidationError(
+            "invalid_input",
+            "confidence must be a number between 0 and 1.",
+            details={"field": "confidence"},
+        )
+    return confidence
+
+
 def validate_date_range(start_date: object, end_date: object) -> tuple[str, str]:
     """Validate an inclusive ISO-date range and return its normalised endpoints."""
 
@@ -292,6 +360,9 @@ def validate_string_list(value: object, *, field_name: str) -> list[str]:
 __all__ = [
     "ACTIVITY_TYPES",
     "AdvisorInstruction",
+    "CANDIDATE_SOURCE_TYPES",
+    "CANDIDATE_STATUSES",
+    "CandidateIntelligence",
     "MERGE_MODES",
     "PRIORITIES",
     "ProjectStatus",
@@ -307,6 +378,9 @@ __all__ = [
     "utc_now",
     "utc_now_iso",
     "validate_activity_type",
+    "validate_candidate_source_type",
+    "validate_candidate_status",
+    "validate_confidence",
     "validate_date_range",
     "validate_enum",
     "validate_iso_date",

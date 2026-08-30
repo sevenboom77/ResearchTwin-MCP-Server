@@ -2,7 +2,7 @@
 
 Unlike ``researchtwin_mcp.stdio_entry``, this module starts the official MCP
 SDK Streamable HTTP transport on the configured host and port. It reuses the
-same server factory and six registered Tools; it does not use ``uvx`` or
+same server factory and nine registered Tools; it does not use ``uvx`` or
 perform any runtime dependency installation.
 """
 

@@ -25,6 +25,9 @@ SRC_DIR = PROJECT_ROOT / "src"
 EXPECTED_TOOL_NAMES = {
     "record_research_activity",
     "list_research_activities",
+    "record_candidate_intelligence",
+    "list_candidate_intelligence",
+    "update_candidate_status",
     "update_project_status",
     "get_project_status",
     "record_advisor_instruction",
@@ -85,7 +88,7 @@ def _check_data_directory(path: Path) -> bool:
 
 
 async def _probe_tools(url: str) -> bool:
-    """Use the official MCP client to discover the six registered tools."""
+    """Use the official MCP client to discover the nine registered tools."""
 
     try:
         async with httpx2.AsyncClient(trust_env=False, timeout=10.0) as http_client:

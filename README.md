@@ -13,6 +13,7 @@ A research assistant should do more than answer a single question. ResearchTwin 
 - concrete activities, outcomes, blockers, and next steps;
 - the current project stage, tasks, risks, and decisions;
 - structured advisor requirements;
+- external candidate intelligence with a reviewable lifecycle;
 - weekly, meeting, or stage reports assembled from persisted evidence.
 
 The server is intended to be called by the ResearchTwin Agent in OpenTrek. It does not replace the agent, an LLM, or the existing ResearchTwin_Docs knowledge base.
@@ -29,6 +30,15 @@ RAG and MCP have distinct responsibilities:
 
 This separation keeps the project record deterministic and reviewable. The MCP server does not need to run another LLM merely to store a structured activity or create a report from stored facts.
 
+### Candidate Intelligence != Project Knowledge
+
+Candidate intelligence is a separate ledger for externally discovered papers,
+repositories, news, web material, advisor leads, and similar items. A candidate
+can move from `discovered` through review to `promoted`, but `promoted` records
+user approval and supporting evidence only. It does not write to BaiLian,
+ResearchTwin_Docs, or any other knowledge base, and it does not by itself turn
+an external item into a verified project fact.
+
 ## Architecture
 
 ~~~mermaid
@@ -37,9 +47,9 @@ flowchart LR
     A -->|retrieve and reason| R[ResearchTwin_Docs RAG]
     R --> K[Research papers and technical material]
     A -->|MCP function calls| M[ResearchTwin MCP Server]
-    M --> T[Six research-management tools]
+    M --> T[Nine research-management tools]
     T --> S[JSON persistence layer]
-    S --> D[Runtime research records and reports]
+    S --> D[Runtime project records, candidate ledger, and reports]
 ~~~
 
 See [docs/architecture.md](docs/architecture.md) for component boundaries, persistence rules, and extension points.
@@ -51,7 +61,7 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries, persi
 - Dedicated Remote MCP entry point for pre-installed, long-lived Streamable HTTP deployment.
 - Optional command-line SSE compatibility transport, when selected at startup.
 - Dedicated stdio console entry point for uvx-hosted MCP clients.
-- Six focused tools instead of a monolithic server script.
+- Nine focused tools instead of a monolithic server script.
 - UTF-8 JSON persistence with atomic replacement and in-process locking.
 - UUID record identifiers and timezone-aware ISO 8601 timestamps.
 - Structured success and error responses suitable for agent tool handling.
@@ -66,6 +76,9 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries, persi
 | update_project_status | Merge or replace the current stage, task lists, risks, and decisions. |
 | get_project_status | Read the current project snapshot before planning or reporting. |
 | record_advisor_instruction | Preserve a structured advisor requirement, priority, deadline, and follow-up. |
+| record_candidate_intelligence | Persist a newly discovered external candidate without treating it as project knowledge. |
+| list_candidate_intelligence | Review recent candidates by lifecycle status, source type, or related issue. |
+| update_candidate_status | Advance a candidate through the strict review lifecycle and retain approval evidence. |
 | generate_research_report | Build a weekly, meeting, or stage Markdown report from persisted data. |
 
 The complete input, output, and error contract is in [docs/mcp_tools.md](docs/mcp_tools.md).
@@ -83,7 +96,7 @@ ResearchTwin-MCP-Server/
 │   ├── stdio_entry.py                # Dedicated uvx/stdin-stdout MCP entry
 │   ├── models/                       # Validation helpers and schemas
 │   ├── storage/                      # Shared JSON persistence layer
-│   └── tools/                        # Activity, status, advisor, and report tools
+│   └── tools/                        # Activity, status, advisor, candidate, and report tools
 ├── scripts/
 │   ├── start_server.ps1
 │   ├── show_connection_info.py       # Read-only local/LAN URL helper
@@ -197,13 +210,14 @@ Streamable HTTP is the normal mode. For explicit SSE compatibility, run python s
 
 ### Hosted stdio mode for BaiLian uvx
 
-The separate researchtwin-mcp-server console command runs the same six tools
-over MCP stdin/stdout. It does not start HTTP, Uvicorn, or a listener on port
-8000. PyPI release 0.1.0 remains the compatible stdio baseline. The Remote
-entry added in this source tree is not part of that immutable PyPI release;
-a future release needs a new version and separate publication. Do not replace
-the existing BaiLian uvx service with this local source until the parallel
-Remote deployment has completed its own public protocol verification.
+The source-tree researchtwin-mcp-server console command runs the same nine
+tools over MCP stdin/stdout. It does not start HTTP, Uvicorn, or a listener on
+port 8000. Published PyPI release 0.1.0 predates the candidate-intelligence
+tools and remains the compatible stdio baseline. The Remote entry added in this
+source tree is not part of that immutable PyPI release; a future release needs
+a new version and separate publication. Do not replace the existing BaiLian
+uvx service with this local source until the parallel Remote deployment has
+completed its own public protocol verification.
 
 ### Demo network safety
 
@@ -226,7 +240,7 @@ Run the local MCP Streamable HTTP smoke test after dependencies are installed:
 .\.venv\Scripts\python.exe .\scripts\smoke_test.py
 ~~~
 
-The smoke test starts an isolated Streamable HTTP server and uses the official MCP client to discover exactly six tools, call all six successfully, verify persistence and report generation, and check representative `isError` failures. It uses temporary data rather than your `runtime_data/` directory.
+The smoke test starts an isolated Streamable HTTP server and uses the official MCP client to discover exactly nine tools, exercise the core persistence and report workflow, and check representative `isError` failures. It uses temporary data rather than your `runtime_data/` directory.
 
 Run the dedicated stdio smoke test after installing the project:
 
@@ -235,7 +249,7 @@ Run the dedicated stdio smoke test after installing the project:
 ~~~
 
 It launches the dedicated console entry point through the official MCP stdio
-client, verifies initialization and exactly six tools, records and reads back
+client, verifies initialization and exactly nine tools, records and reads back
 temporary data, and checks an MCP isError response. It does not listen on port
 8000.
 
@@ -255,13 +269,13 @@ OpenTrek registration should use the UI's STREAMABLE choice and this URL shape:
 http://<LAN_IPV4>:8000/mcp
 ~~~
 
-Do not hand-invent a transportType JSON value. Select STREAMABLE on the OpenTrek MCP registration page, enter the URL, save, and verify that all six tools are discovered. See [the step-by-step registration guide](docs/open_trek_registration.md) and [OpenTrek integration guidance](docs/open_trek_integration.md) for LAN IPv4 discovery, SSE compatibility, VPN checks, and a safe firewall troubleshooting process.
+Do not hand-invent a transportType JSON value. Select STREAMABLE on the OpenTrek MCP registration page, enter the URL, save, and verify that all nine tools are discovered. See [the step-by-step registration guide](docs/open_trek_registration.md) and [OpenTrek integration guidance](docs/open_trek_integration.md) for LAN IPv4 discovery, SSE compatibility, VPN checks, and a safe firewall troubleshooting process.
 
 ## Linux and remote deployment
 
 The repository includes a non-root Docker image, a systemd service example, an
 Nginx reverse-proxy example, and a read-only deployment preflight script.
-They package the existing Streamable HTTP server without changing its six MCP
+They package the existing Streamable HTTP server without changing its nine MCP
 tools. Follow [the Linux deployment guide](docs/deployment_linux.md) before
 using them.
 

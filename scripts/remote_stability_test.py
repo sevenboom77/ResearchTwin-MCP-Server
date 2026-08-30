@@ -31,6 +31,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOL_NAMES = {
     "record_research_activity",
     "list_research_activities",
+    "record_candidate_intelligence",
+    "list_candidate_intelligence",
+    "update_candidate_status",
     "update_project_status",
     "get_project_status",
     "record_advisor_instruction",
@@ -173,7 +176,7 @@ async def _exercise_independent_session(
                     or set(discovered_tool_names) != EXPECTED_TOOL_NAMES
                 ):
                     raise RuntimeError(
-                        "tools/list did not return the expected six tools: "
+                        "tools/list did not return the expected nine tools: "
                         f"{sorted(discovered_tool_names)}"
                     )
 

@@ -13,6 +13,7 @@ from researchtwin_mcp import __version__
 from researchtwin_mcp.config import ConfigurationError, Settings
 from researchtwin_mcp.storage.json_store import JsonStore
 from researchtwin_mcp.tools.advisor_instruction import register_advisor_instruction_tools
+from researchtwin_mcp.tools.candidate_intelligence import register_candidate_intelligence_tools
 from researchtwin_mcp.tools.project_status import register_project_status_tools
 from researchtwin_mcp.tools.research_activity import register_research_activity_tools
 from researchtwin_mcp.tools.research_report import register_research_report_tool
@@ -45,7 +46,7 @@ def create_server(settings: Settings | None = None) -> MCPServer:
         description=(
             "Persistent research-project management tools for the ResearchTwin Agent. "
             "Use these tools to record activities and advisor requirements, maintain project status, "
-            "retrieve history, and generate structured reports."
+            "review candidate intelligence, retrieve history, and generate structured reports."
         ),
         instructions=(
             "Use RAG to understand existing research materials. Use these MCP tools only to persist, "
@@ -57,13 +58,14 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     register_research_activity_tools(server, store)
     register_project_status_tools(server, store)
     register_advisor_instruction_tools(server, store)
+    register_candidate_intelligence_tools(server, store)
     register_research_report_tool(server, store)
     _forbid_unknown_tool_arguments(server)
     return server
 
 
 def _forbid_unknown_tool_arguments(server: MCPServer) -> None:
-    """Publish and enforce ``additionalProperties: false`` for all six tools.
+    """Publish and enforce ``additionalProperties: false`` for every registered tool.
 
     MCP SDK 2.1.0's public high-level decorator has no ``extra=`` option for
     its dynamically generated Pydantic argument models.  We therefore apply a
@@ -104,7 +106,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def run_streamable_http_server(settings: Settings) -> None:
-    """Run the shared six-tool server as a persistent Streamable HTTP service.
+    """Run the shared nine-tool server as a persistent Streamable HTTP service.
 
     This is deliberately a small transport wrapper around :func:`create_server`.
     It performs no separate tool registration, package resolution, or runtime

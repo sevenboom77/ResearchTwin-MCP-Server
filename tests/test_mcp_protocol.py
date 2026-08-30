@@ -29,6 +29,9 @@ EXPECTED_TOOL_NAMES = {
     "update_project_status",
     "get_project_status",
     "record_advisor_instruction",
+    "record_candidate_intelligence",
+    "list_candidate_intelligence",
+    "update_candidate_status",
     "generate_research_report",
 }
 
@@ -170,8 +173,8 @@ def _structured_business_error(result: CallToolResult, expected_code: str) -> No
 
 
 @pytest.mark.anyio
-async def test_streamable_http_discovers_exactly_six_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
-    """The live MCP endpoint advertises the six expected typed tool contracts."""
+async def test_streamable_http_discovers_exactly_nine_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
+    """The live MCP endpoint advertises the nine expected typed tool contracts."""
 
     async with httpx2.AsyncClient(trust_env=False, timeout=8.0) as http_client:
         async with streamable_http_client(launched_server.url, http_client=http_client) as (read_stream, write_stream):
@@ -262,6 +265,65 @@ async def test_streamable_http_discovers_exactly_six_strictly_schematized_tools(
         "critical",
     ]
 
+    candidate_source_types = ["paper", "github", "news", "web", "advisor", "other"]
+    candidate_statuses = ["discovered", "shortlisted", "validated", "promoted", "rejected"]
+    candidate_record = tools["record_candidate_intelligence"]
+    assert set(candidate_record.input_schema["required"]) == {
+        "title",
+        "source_type",
+        "summary",
+        "relevance_reason",
+    }
+    assert candidate_record.input_schema["properties"]["source_type"]["enum"] == candidate_source_types
+    assert candidate_record.input_schema["properties"]["status"]["enum"] == candidate_statuses
+    assert candidate_record.input_schema["properties"]["status"]["default"] == "discovered"
+    for field in ("source_url", "related_project_issue", "user_note"):
+        assert _schema_types(candidate_record.input_schema["properties"][field]) == {"string", "null"}
+    input_confidence = _non_null_schema(candidate_record.input_schema["properties"]["confidence"])
+    assert input_confidence["type"] == "number"
+    assert input_confidence["minimum"] == 0
+    assert input_confidence["maximum"] == 1
+
+    candidate_list = tools["list_candidate_intelligence"]
+    assert "required" not in candidate_list.input_schema
+    assert _non_null_schema(candidate_list.input_schema["properties"]["status"])["enum"] == candidate_statuses
+    assert _non_null_schema(candidate_list.input_schema["properties"]["source_type"])["enum"] == candidate_source_types
+    assert _schema_types(candidate_list.input_schema["properties"]["related_project_issue"]) == {"string", "null"}
+    candidate_limit = candidate_list.input_schema["properties"]["limit"]
+    assert candidate_limit["minimum"] == 1
+    assert candidate_limit["maximum"] == 100
+
+    candidate_update = tools["update_candidate_status"]
+    assert set(candidate_update.input_schema["required"]) == {"candidate_id", "status"}
+    assert candidate_update.input_schema["properties"]["candidate_id"]["format"] == "uuid"
+    assert candidate_update.input_schema["properties"]["status"]["enum"] == candidate_statuses
+    for field in ("user_note", "validation_evidence", "promotion_reason"):
+        assert _schema_types(candidate_update.input_schema["properties"][field]) == {"string", "null"}
+
+    candidate_output = candidate_record.output_schema["$defs"]["CandidateIntelligenceRecord"]
+    assert set(candidate_output["required"]) == {
+        "candidate_id",
+        "title",
+        "source_type",
+        "source_url",
+        "summary",
+        "relevance_reason",
+        "related_project_issue",
+        "status",
+        "confidence",
+        "user_note",
+        "validation_evidence",
+        "promotion_reason",
+        "created_at",
+        "updated_at",
+    }
+    assert candidate_output["properties"]["candidate_id"]["format"] == "uuid"
+    assert candidate_output["properties"]["source_type"]["enum"] == candidate_source_types
+    assert candidate_output["properties"]["status"]["enum"] == candidate_statuses
+    output_confidence = _non_null_schema(candidate_output["properties"]["confidence"])
+    assert output_confidence["minimum"] == 0
+    assert output_confidence["maximum"] == 1
+
     assert set(tools["generate_research_report"].input_schema["required"]) == {
         "start_date",
         "end_date",
@@ -276,7 +338,7 @@ async def test_streamable_http_discovers_exactly_six_strictly_schematized_tools(
 
 
 @pytest.mark.anyio
-async def test_streamable_http_calls_all_six_tools_and_persists_results(launched_server: LaunchedServer) -> None:
+async def test_streamable_http_calls_all_nine_tools_and_persists_results(launched_server: LaunchedServer) -> None:
     """Every registered tool succeeds through the actual MCP client/server wire."""
 
     today = datetime.now(timezone.utc).date().isoformat()
@@ -313,7 +375,7 @@ async def test_streamable_http_calls_all_six_tools_and_persists_results(launched
                         {
                             "project_name": "ResearchTwin protocol test",
                             "current_stage": "MCP verification",
-                            "completed_tasks": ["Exercise all six tools"],
+                            "completed_tasks": ["Exercise all nine tools"],
                             "pending_tasks": ["Review protocol evidence"],
                             "risks": ["No external reachability assertion"],
                             "important_decisions": ["Use Streamable HTTP"],
@@ -340,6 +402,49 @@ async def test_streamable_http_calls_all_six_tools_and_persists_results(launched
                 )
                 assert instruction["record"]["task"] == "Prepare protocol evidence"
 
+                candidate = _success_payload(
+                    await session.call_tool(
+                        "record_candidate_intelligence",
+                        {
+                            "title": "Protocol candidate paper",
+                            "source_type": "paper",
+                            "source_url": "https://example.test/protocol-candidate",
+                            "summary": "A candidate source recorded through the real MCP protocol.",
+                            "relevance_reason": "It exercises candidate persistence and lifecycle output.",
+                            "related_project_issue": "Protocol verification",
+                            "confidence": 0.9,
+                            "user_note": "Review during protocol acceptance.",
+                        },
+                    )
+                )
+                candidate_id = str(candidate["candidate_id"])
+                assert candidate["record"]["candidate_id"] == candidate_id
+                assert candidate["record"]["status"] == "discovered"
+                assert candidate["record"]["confidence"] == 0.9
+
+                candidates = _success_payload(
+                    await session.call_tool(
+                        "list_candidate_intelligence",
+                        {"source_type": "paper", "related_project_issue": "verification", "limit": 10},
+                    )
+                )
+                assert candidates["count"] == 1
+                assert candidates["candidates"][0]["candidate_id"] == candidate_id
+
+                shortlisted_candidate = _success_payload(
+                    await session.call_tool(
+                        "update_candidate_status",
+                        {
+                            "candidate_id": candidate_id,
+                            "status": "shortlisted",
+                            "user_note": "Protocol review is scheduled.",
+                        },
+                    )
+                )
+                assert shortlisted_candidate["candidate_id"] == candidate_id
+                assert shortlisted_candidate["record"]["status"] == "shortlisted"
+                assert shortlisted_candidate["record"]["user_note"] == "Protocol review is scheduled."
+
                 report = _success_payload(
                     await session.call_tool(
                         "generate_research_report",
@@ -357,6 +462,21 @@ async def test_streamable_http_calls_all_six_tools_and_persists_results(launched
     report_path = launched_server.data_dir / str(report["report_path"])
     assert report_path.is_file()
     assert report_path.read_text(encoding="utf-8") == report["report"]
+    candidate_path = launched_server.data_dir / "candidate_intelligence.json"
+    persisted_candidates = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert len(persisted_candidates["candidates"]) == 1
+    persisted_candidate = persisted_candidates["candidates"][0]
+    assert persisted_candidate["candidate_id"] == candidate_id
+    assert persisted_candidate["status"] == "shortlisted"
+    assert persisted_candidate["user_note"] == "Protocol review is scheduled."
+    # JSON persistence keeps ``+00:00`` while Pydantic serializes the same UTC
+    # instant as ``Z`` in structured MCP output.
+    assert datetime.fromisoformat(persisted_candidate["created_at"]) == datetime.fromisoformat(
+        str(shortlisted_candidate["record"]["created_at"]).replace("Z", "+00:00")
+    )
+    assert datetime.fromisoformat(persisted_candidate["updated_at"]) == datetime.fromisoformat(
+        str(shortlisted_candidate["record"]["updated_at"]).replace("Z", "+00:00")
+    )
 
 
 @pytest.mark.anyio
@@ -604,6 +724,36 @@ async def test_streamable_http_returns_is_error_for_invalid_and_storage_failures
                         {"start_date": today, "end_date": "2000-01-01", "report_type": "weekly"},
                     ),
                     "invalid_date_range",
+                )
+                assert "confidence" in _error_text(
+                    await session.call_tool(
+                        "record_candidate_intelligence",
+                        {
+                            "title": "Invalid protocol confidence",
+                            "source_type": "paper",
+                            "summary": "This must be rejected at the typed MCP boundary.",
+                            "relevance_reason": "It verifies number-only confidence input.",
+                            "confidence": "0.5",
+                        },
+                    )
+                )
+                candidate = _success_payload(
+                    await session.call_tool(
+                        "record_candidate_intelligence",
+                        {
+                            "title": "Invalid transition protocol candidate",
+                            "source_type": "web",
+                            "summary": "A candidate reserved for lifecycle rejection testing.",
+                            "relevance_reason": "It verifies strict transition enforcement over HTTP.",
+                        },
+                    )
+                )
+                _structured_business_error(
+                    await session.call_tool(
+                        "update_candidate_status",
+                        {"candidate_id": str(candidate["candidate_id"]), "status": "promoted"},
+                    ),
+                    "invalid_candidate_transition",
                 )
 
                 logs_path = launched_server.data_dir / "research_logs.json"

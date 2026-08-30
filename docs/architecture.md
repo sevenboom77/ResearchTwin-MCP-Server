@@ -11,6 +11,7 @@ It deliberately does not duplicate the responsibilities of the agent or the RAG 
 | OpenTrek ResearchTwin Agent | Intent understanding, planning, tool selection, and prose refinement. | Direct file persistence rules. |
 | ResearchTwin_Docs RAG | Retrieval and interpretation of existing research documents. | Mutation of project state. |
 | ResearchTwin MCP Server | Validated research-management tools and deterministic report assembly. | LLM-driven document interpretation. |
+| Candidate Intelligence tools | Persistent external-candidate records and a strict review lifecycle. | Automatic source verification, knowledge-base writes, or treating a candidate as a project fact. |
 | JSON storage | Durable local records. | Business rules or natural-language reasoning. |
 
 This boundary makes it possible to trace a report back to specific stored activities, status fields, and advisor instructions.
@@ -29,17 +30,20 @@ flowchart TB
         T1[Research activities]
         T2[Project status]
         T3[Advisor instructions]
-        T4[Research reports]
+        T4[Candidate intelligence]
+        T5[Research reports]
         J[Shared JSON store]
         C --> M
         M --> T1
         M --> T2
         M --> T3
         M --> T4
+        M --> T5
         T1 --> J
         T2 --> J
         T3 --> J
         T4 --> J
+        T5 --> J
     end
 
     S --> Srv
@@ -89,23 +93,33 @@ port:    none
 logs:    stderr only
 ~~~
 
-It registers the same six tools through the same create_server() function. It
+It registers the same nine tools through the same create_server() function. It
 does not start Uvicorn, does not bind port 8000, and does not replace the
 Streamable HTTP or SSE modes. See [PyPI and BaiLian uvx preparation](pypi_release.md)
 for release and FC constraints.
 
 ## Tool modules
 
-The MCP surface has six small, purpose-specific operations:
+The MCP surface has nine small, purpose-specific operations:
 
 | Concern | Write operation | Read or derived operation |
 | --- | --- | --- |
 | Research history | record_research_activity | list_research_activities |
 | Current project snapshot | update_project_status | get_project_status |
 | Advisor requirements | record_advisor_instruction | Included by report generation |
+| Candidate intelligence | record_candidate_intelligence, update_candidate_status | list_candidate_intelligence |
 | Project communication | — | generate_research_report |
 
 The tool layer is intentionally separate from storage. A tool owns input validation and business behavior; the shared store owns directory initialization, UTF-8 JSON I/O, and safe replacement. This prevents duplicate file-writing logic from drifting across tools.
+
+Candidate intelligence is deliberately separate from research activities,
+advisor instructions, reports, and the RAG knowledge base. Each newly recorded
+candidate begins as `discovered` and can progress only through
+`discovered -> shortlisted -> validated -> promoted`, or move to `rejected`
+from a pre-promotion state. `promoted` and `rejected` may only repeat their own
+status. A promotion records user approval and its supplied evidence; it does
+not make an external source a verified project fact or write to BaiLian,
+ResearchTwin_Docs, or another knowledge base.
 
 ## Persistence model
 
@@ -116,11 +130,17 @@ runtime_data/
 ├── research_logs.json
 ├── project_status.json
 ├── advisor_instructions.json
+├── candidate_intelligence.json
 └── reports/
     └── <date-range>_<report-type>.md
 ~~~
 
-New activity and advisor-instruction records have UUIDs plus created_at and updated_at values expressed as timezone-aware ISO 8601 timestamps. The project-status snapshot also preserves created_at and updated_at. JSON is encoded as UTF-8 with non-ASCII text preserved.
+New activity, advisor-instruction, and candidate-intelligence records have
+UUIDs plus `created_at` and `updated_at` values expressed as timezone-aware ISO
+8601 timestamps. The project-status snapshot also preserves those timestamps.
+`candidate_intelligence.json` has the stable root shape
+`{ "candidates": [] }`; rejected candidates remain in that ledger rather than
+being deleted. JSON is encoded as UTF-8 with non-ASCII text preserved.
 
 The store initializes missing directories and expected empty structures. Writes are performed through a temporary file and atomic replacement, while an in-process lock protects concurrent tool calls within the server process. A malformed individual record is treated defensively so it does not take down the entire service.
 
@@ -142,10 +162,14 @@ The tools validate inputs before persistence:
 
 - dates use YYYY-MM-DD;
 - activity type, priority, report type, and merge mode are constrained enumerations;
+- candidate source type and candidate status are constrained enumerations;
+- candidate confidence, when present, is a finite number from 0 through 1;
 - required text cannot be blank;
 - list fields contain valid strings;
 - activity queries reject an inverted date range;
-- duplicate activity attempts are rejected rather than silently treated as success.
+- duplicate activity attempts are rejected rather than silently treated as success;
+- candidate duplicates use only title plus source identity, without semantic inference;
+- candidate status changes must follow the strict lifecycle.
 
 The common result shape is:
 
@@ -169,7 +193,7 @@ Successful MCP calls carry typed structured content that conforms to the tool's 
 
 ## Reporting flow
 
-generate_research_report reads the persisted research logs, current status, and advisor instructions. Activities are selected by their inclusive report-date window. Advisor instructions are selected only when the date in each record's `created_at` timestamp falls within that same inclusive window; records with a missing or malformed timestamp are omitted. The current project-status snapshot is retained in full as current context, even when it was last updated outside the report window. The tool writes and returns a Markdown document with these stable sections:
+generate_research_report reads the persisted research logs, current status, and advisor instructions. Activities are selected by their inclusive report-date window. Advisor instructions are selected only when the date in each record's `created_at` timestamp falls within that same inclusive window; records with a missing or malformed timestamp are omitted. The current project-status snapshot is retained in full as current context, even when it was last updated outside the report window. Candidate intelligence is intentionally not read by this report flow, including candidates in `promoted` status. The tool writes and returns a Markdown document with these stable sections:
 
 1. Stage goals
 2. Completed work

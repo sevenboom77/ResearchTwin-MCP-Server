@@ -30,23 +30,26 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 RESEARCH_LOGS_FILE: Final = "research_logs.json"
 PROJECT_STATUS_FILE: Final = "project_status.json"
 ADVISOR_INSTRUCTIONS_FILE: Final = "advisor_instructions.json"
+CANDIDATE_INTELLIGENCE_FILE: Final = "candidate_intelligence.json"
 
 DEFAULT_RESEARCH_LOGS: Final[JsonObject] = {"activities": []}
 DEFAULT_PROJECT_STATUS: Final[JsonObject] = {}
 DEFAULT_ADVISOR_INSTRUCTIONS: Final[JsonObject] = {"instructions": []}
+DEFAULT_CANDIDATE_INTELLIGENCE: Final[JsonObject] = {"candidates": []}
 
 RUNTIME_JSON_DEFAULTS: Final[dict[str, JsonObject]] = {
     RESEARCH_LOGS_FILE: DEFAULT_RESEARCH_LOGS,
     PROJECT_STATUS_FILE: DEFAULT_PROJECT_STATUS,
     ADVISOR_INSTRUCTIONS_FILE: DEFAULT_ADVISOR_INSTRUCTIONS,
+    CANDIDATE_INTELLIGENCE_FILE: DEFAULT_CANDIDATE_INTELLIGENCE,
 }
-"""Initial contents for the three files owned by the runtime data directory."""
+"""Initial contents for the four files owned by the runtime data directory."""
 
 
 class JsonStore:
     """Persist JSON documents below one data directory.
 
-    The constructor creates the data directory and the three standard runtime
+    The constructor creates the data directory and the four standard runtime
     JSON files. All file names accepted by public methods are resolved relative
     to ``data_dir`` and cannot escape it through absolute paths, ``..``, or
     existing directory symlinks.
@@ -240,6 +243,30 @@ class JsonStore:
 
         return self.save_advisor_instructions(value)
 
+    def load_candidate_intelligence(self) -> JsonObject:
+        """Load candidate intelligence records with their safe empty container shape."""
+
+        return self._load_known_object(
+            CANDIDATE_INTELLIGENCE_FILE,
+            DEFAULT_CANDIDATE_INTELLIGENCE,
+            required_list_key="candidates",
+        )
+
+    def save_candidate_intelligence(self, value: JsonObject) -> Path:
+        """Persist the candidate intelligence container."""
+
+        return self.write_json(CANDIDATE_INTELLIGENCE_FILE, value)
+
+    def read_candidate_intelligence(self) -> JsonObject:
+        """Alias for :meth:`load_candidate_intelligence` for read-oriented callers."""
+
+        return self.load_candidate_intelligence()
+
+    def write_candidate_intelligence(self, value: JsonObject) -> Path:
+        """Alias for :meth:`save_candidate_intelligence` for write-oriented callers."""
+
+        return self.save_candidate_intelligence(value)
+
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
         """Return the process-wide re-entrant lock assigned to *path*."""
@@ -387,7 +414,9 @@ class JsonStore:
 
 __all__ = [
     "ADVISOR_INSTRUCTIONS_FILE",
+    "CANDIDATE_INTELLIGENCE_FILE",
     "DEFAULT_ADVISOR_INSTRUCTIONS",
+    "DEFAULT_CANDIDATE_INTELLIGENCE",
     "DEFAULT_PROJECT_STATUS",
     "DEFAULT_RESEARCH_LOGS",
     "JsonObject",
