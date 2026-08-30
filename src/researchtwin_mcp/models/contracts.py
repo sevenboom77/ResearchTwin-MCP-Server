@@ -9,7 +9,7 @@ objects with the correct ``isError`` semantics.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Mapping, TypeAlias, TypeVar
+from typing import Annotated, Literal, Mapping, TypeAlias, TypeVar, Any
 from uuid import UUID
 
 from mcp.types import CallToolResult, TextContent
@@ -76,6 +76,10 @@ CandidateStatus = Literal["discovered", "shortlisted", "validated", "promoted", 
 # schema uses the standard ``minimum`` / ``maximum`` keywords.
 CandidateConfidence = Annotated[float, Field(ge=0, le=1), BeforeValidator(_reject_non_numeric_confidence)]
 CandidateLimit = Annotated[int, Field(ge=1, le=100)]
+
+ExternalSource = Literal["arxiv", "github"]
+ExternalSort = Literal["relevance", "recent"]
+ExternalResearchSourceType = Literal["paper", "github"]
 
 
 class ContractModel(BaseModel):
@@ -219,6 +223,48 @@ class UpdateCandidateStatusSuccess(ContractModel):
     record: CandidateIntelligenceRecord
 
 
+class ExternalResearchItem(ContractModel):
+    source_type: ExternalResearchSourceType
+    source_provider: ExternalSource
+    source_id: NonEmptyText
+    title: NonEmptyText
+    source_url: NonEmptyText
+    summary: str
+    authors: list[str]
+    published_at: str | None
+    updated_at: str | None
+    metadata: dict[str, Any]
+    query: NonEmptyText
+
+
+class ExternalSourceError(ContractModel):
+    source_provider: ExternalSource
+    error: NonEmptyText
+
+
+class SearchExternalResearchSuccess(ContractModel):
+    status: Literal["success"]
+    query: NonEmptyText
+    sources: list[ExternalSource]
+    sort: ExternalSort
+    limit_per_source: Annotated[int, Field(ge=1, le=10)]
+    results: list[ExternalResearchItem]
+    source_errors: list[ExternalSourceError]
+
+
+class ResearchContext(ContractModel):
+    project_status: ProjectStatusRecord | None
+    recent_activities: list[dict[str, Any]]
+    recent_advisor_instructions: list[dict[str, Any]]
+    recent_candidates: list[CandidateIntelligenceRecord]
+    context_summary_fields: dict[str, Any]
+
+
+class GetResearchContextSuccess(ContractModel):
+    status: Literal["success"]
+    research_context: ResearchContext
+
+
 class GenerateResearchReportSuccess(ContractModel):
     """Successful ``generate_research_report`` output."""
 
@@ -275,6 +321,11 @@ __all__ = [
     "CompatibleStringListInput",
     "ContractModel",
     "GenerateResearchReportSuccess",
+    "ExternalResearchItem",
+    "ExternalSourceError",
+    "SearchExternalResearchSuccess",
+    "ResearchContext",
+    "GetResearchContextSuccess",
     "GetProjectStatusSuccess",
     "IsoDate",
     "ListResearchActivitiesSuccess",

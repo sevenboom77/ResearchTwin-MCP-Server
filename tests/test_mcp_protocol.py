@@ -20,6 +20,10 @@ import httpx2
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
+from mcp.server.transport_security import TransportSecuritySettings
+from researchtwin_mcp.config import Settings
+from researchtwin_mcp.server import create_server
+from researchtwin_mcp.tools import external_research
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +37,8 @@ EXPECTED_TOOL_NAMES = {
     "list_candidate_intelligence",
     "update_candidate_status",
     "generate_research_report",
+    "get_research_context",
+    "search_external_research",
 }
 
 
@@ -173,8 +179,8 @@ def _structured_business_error(result: CallToolResult, expected_code: str) -> No
 
 
 @pytest.mark.anyio
-async def test_streamable_http_discovers_exactly_nine_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
-    """The live MCP endpoint advertises the nine expected typed tool contracts."""
+async def test_streamable_http_discovers_exactly_eleven_strictly_schematized_tools(launched_server: LaunchedServer) -> None:
+    """The live MCP endpoint advertises the eleven expected typed tool contracts."""
 
     async with httpx2.AsyncClient(trust_env=False, timeout=8.0) as http_client:
         async with streamable_http_client(launched_server.url, http_client=http_client) as (read_stream, write_stream):
@@ -335,6 +341,39 @@ async def test_streamable_http_discovers_exactly_nine_strictly_schematized_tools
         "stage",
     ]
     assert tools["generate_research_report"].input_schema["properties"]["start_date"]["format"] == "date"
+
+
+@pytest.mark.anyio
+async def test_streamable_http_external_search_uses_mocked_adapters(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Exercise external discovery through MCP wire using an in-process ASGI transport."""
+
+    paper = {"source_type": "paper", "source_provider": "arxiv", "source_id": "2401.1", "title": "Paper", "source_url": "https://arxiv.org/abs/2401.1", "summary": "Summary", "authors": ["A"], "published_at": "2024-01-01T00:00:00Z", "updated_at": None, "metadata": {}}
+    repo = {"source_type": "github", "source_provider": "github", "source_id": "org/repo", "title": "org/repo", "source_url": "https://github.com/org/repo", "summary": "Repo", "authors": [], "published_at": None, "updated_at": "2024-01-02T00:00:00Z", "metadata": {"stars": 3}}
+    monkeypatch.setattr(external_research, "search_arxiv", lambda *args: [paper])
+    monkeypatch.setattr(external_research, "search_github", lambda *args: [repo])
+    server = create_server(Settings("127.0.0.1", 8000, tmp_path, "WARNING"))
+    app = server.streamable_http_app(streamable_http_path="/mcp", host="127.0.0.1", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
+    async with app.router.lifespan_context(app):
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url="http://localhost", timeout=8.0) as http_client:
+            async with streamable_http_client("http://localhost/mcp", http_client=http_client) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    success = await session.call_tool("search_external_research", {"query": "multi-agent reinforcement learning", "sources": "arxiv,github", "limit_per_source": 1})
+                    payload = _success_payload(success)
+                    assert len(payload["results"]) == 2
+                    assert {item["source_provider"] for item in payload["results"]} == {"arxiv", "github"}
+                    assert payload["source_errors"] == []
+                    assert all("relevance_reason" not in item and "project_knowledge" not in item and "verified" not in item for item in payload["results"])
+
+                    from researchtwin_mcp.external.arxiv import ExternalAdapterError
+                    monkeypatch.setattr(external_research, "search_arxiv", lambda *args: (_ for _ in ()).throw(ExternalAdapterError("arXiv request failed.")))
+                    partial = _success_payload(await session.call_tool("search_external_research", {"query": "q", "sources": ["arxiv", "github"], "limit_per_source": 1}))
+                    assert len(partial["results"]) == 1 and partial["results"][0]["source_provider"] == "github"
+                    assert partial["source_errors"] == [{"source_provider": "arxiv", "error": "arXiv request failed."}]
+                    monkeypatch.setattr(external_research, "search_github", lambda *args: (_ for _ in ()).throw(ExternalAdapterError("GitHub returned HTTP 429.")))
+                    failed = _success_payload(await session.call_tool("search_external_research", {"query": "q", "sources": "arxiv,github"}))
+                    assert failed["results"] == []
+                    assert {entry["source_provider"] for entry in failed["source_errors"]} == {"arxiv", "github"}
 
 
 @pytest.mark.anyio

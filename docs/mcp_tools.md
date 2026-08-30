@@ -558,3 +558,6 @@ Invalid input is a controlled tool result, not a server crash:
 ~~~
 
 Other representative error codes include invalid_date, invalid_enum, invalid_limit, invalid_input, duplicate_activity, duplicate_candidate, candidate_not_found, invalid_candidate_transition, and storage failures. Agents should correct the input when possible, surface a concise explanation to the researcher when necessary, and never fabricate a successful persistence result.
+External search result != Candidate Intelligence != Project Knowledge.
+
+The ResearchTwin agent first calls `get_research_context`, then the LLM formulates a targeted query for `search_external_research`. Raw arXiv/GitHub results are evaluated by the agent before it explicitly calls `record_candidate_intelligence`; no search result is automatically persisted or promoted.

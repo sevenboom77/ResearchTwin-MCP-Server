@@ -38,6 +38,8 @@ EXPECTED_TOOL_NAMES = {
     "get_project_status",
     "record_advisor_instruction",
     "generate_research_report",
+    "get_research_context",
+    "search_external_research",
 }
 
 
@@ -176,7 +178,7 @@ async def _exercise_independent_session(
                     or set(discovered_tool_names) != EXPECTED_TOOL_NAMES
                 ):
                     raise RuntimeError(
-                        "tools/list did not return the expected nine tools: "
+                        "tools/list did not return the expected eleven tools: "
                         f"{sorted(discovered_tool_names)}"
                     )
 

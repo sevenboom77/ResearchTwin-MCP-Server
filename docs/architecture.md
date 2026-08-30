@@ -236,3 +236,6 @@ The current separation supports incremental upgrades without changing the agent-
 3. Add ResearchTwin_Core tools for domain-specific experiment or paper workflows.
 4. Add an authenticated dashboard that reads the same project state.
 5. Add report templates while preserving the source-record traceability shown here.
+External search result != Candidate Intelligence != Project Knowledge.
+
+Discovery flow: Agent -> get context -> LLM creates targeted query -> search raw results -> Agent relevance reasoning -> record candidate -> lifecycle. Providers are currently arXiv and GitHub; news and web adapters may be added later. An optional `GITHUB_TOKEN` only improves rate limits and is never returned or persisted. No second LLM runs in this server.
