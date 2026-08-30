@@ -346,6 +346,12 @@ def _validate_wheel_tags(metadata: WheelMetadata) -> None:
     ``cpython-311`` extension is never accepted.
     """
 
+    universal_py3 = any(
+        t.split("-", maxsplit=2)[0] in {"py3", "py312", "py2.py3"}
+        and t.split("-", maxsplit=2)[1] == "none"
+        and t.split("-", maxsplit=2)[2].lower() == "any"
+        for t in metadata.tags
+    )
     for tag in metadata.tags:
         try:
             python_tag, abi_tag, platform_tag = tag.split("-", maxsplit=2)
@@ -355,7 +361,7 @@ def _validate_wheel_tags(metadata: WheelMetadata) -> None:
         if normalized == "any":
             # Some universal data packages (notably tzdata) publish the
             # standard ``py2.py3-none-any`` tag; it is valid on CPython 3.12.
-            if python_tag not in {"py3", "py312", "py2.py3"} or abi_tag != "none":
+            if (python_tag not in {"py3", "py312", "py2.py3"} and not (python_tag == "py2" and universal_py3)) or abi_tag != "none":
                 raise BuildError(f"Wheel Python tag is not CPython 3.12 compatible: {tag!r} in {metadata.path.name}")
             continue
         if "win" in normalized or "macosx" in normalized or "musllinux" in normalized:
