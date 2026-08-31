@@ -156,16 +156,18 @@ def test_record_candidate_intelligence_rejects_only_obvious_duplicates(tmp_path:
     )
 
     assert url_candidate["status"] == "success"
-    assert duplicate_url["status"] == "error"
-    assert duplicate_url["error_code"] == "duplicate_candidate"
+    assert duplicate_url["status"] == "success"
+    assert duplicate_url["record_status"] == "duplicate_candidate"
+    assert duplicate_url["created"] is False
     assert duplicate_url["existing_candidate_id"] == url_candidate["candidate_id"]
     assert no_url_candidate["status"] == "success"
-    assert duplicate_no_url["status"] == "error"
-    assert duplicate_no_url["error_code"] == "duplicate_candidate"
+    assert duplicate_no_url["status"] == "success"
+    assert duplicate_no_url["record_status"] == "duplicate_candidate"
+    assert duplicate_no_url["created"] is False
     assert duplicate_no_url["existing_candidate_id"] == no_url_candidate["candidate_id"]
     assert same_title_other_source["status"] == "success"
-    assert no_url_against_url["status"] == "error"
-    assert no_url_against_url["error_code"] == "duplicate_candidate"
+    assert no_url_against_url["status"] == "success"
+    assert no_url_against_url["record_status"] == "duplicate_candidate"
     assert url_against_no_url["status"] == "success"
     assert list_candidate_intelligence(store)["count"] == 4
 
@@ -177,6 +179,7 @@ def test_duplicate_returns_existing_id_without_mutating_record(tmp_path: Path) -
     duplicate = _record(store, title=" Stable   candidate ", source_type="github", source_url=" https://example.test/stable ")
     after = list_candidate_intelligence(store)["candidates"]
     assert duplicate["existing_candidate_id"] == first["candidate_id"]
+    assert duplicate["record_status"] == "duplicate_candidate"
     assert len(after) == 1
     assert after[0] == before
 

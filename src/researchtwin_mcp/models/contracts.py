@@ -209,7 +209,11 @@ class RecordCandidateIntelligenceSuccess(ContractModel):
 
     status: Literal["success"]
     candidate_id: UUID
-    record: CandidateIntelligenceRecord
+    record_status: Literal["success", "duplicate_candidate"] = "success"
+    created: bool = True
+    existing_candidate_id: UUID | None = None
+    message: str | None = None
+    record: CandidateIntelligenceRecord | None = None
 
 
 class ListCandidateIntelligenceSuccess(ContractModel):

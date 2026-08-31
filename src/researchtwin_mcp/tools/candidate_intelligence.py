@@ -98,21 +98,31 @@ def record_candidate_intelligence(
             "updated_at": timestamp,
         }
 
+        duplicate_candidate_id: str | None = None
+
         def append_candidate(payload: Any) -> dict[str, list[dict[str, Any]]]:
+            nonlocal duplicate_candidate_id
             candidates = _clean_candidates(payload)
             duplicate = next((existing for existing in candidates if _is_duplicate_candidate(record, existing)), None)
             if duplicate is not None:
-                raise ToolInputError(
-                    "duplicate_candidate",
-                    "A candidate with the same title and source identity is already recorded.",
-                    existing_candidate_id=duplicate["candidate_id"],
-                )
+                duplicate_candidate_id = str(duplicate["candidate_id"])
+                return {"candidates": candidates}
             candidates.append(record)
             return {"candidates": candidates}
 
         store.update_json(CANDIDATE_INTELLIGENCE_FILE, {"candidates": []}, append_candidate)
+        if duplicate_candidate_id is not None:
+            logger.info("record_candidate_intelligence duplicate existing_candidate_id=%s", duplicate_candidate_id)
+            return {
+                "status": "success",
+                "record_status": "duplicate_candidate",
+                "created": False,
+                "candidate_id": duplicate_candidate_id,
+                "existing_candidate_id": duplicate_candidate_id,
+                "message": "A candidate with the same title and source identity is already recorded.",
+            }
         logger.info("record_candidate_intelligence candidate_id=%s", record["candidate_id"])
-        return {"status": "success", "candidate_id": record["candidate_id"], "record": record}
+        return {"status": "success", "record_status": "success", "created": True, "candidate_id": record["candidate_id"], "record": record}
 
     return run_tool("record_candidate_intelligence", action)
 

@@ -476,10 +476,12 @@ async def test_streamable_http_calls_all_nine_tools_and_persists_results(launche
                         "relevance_reason": "Wire-level duplicate contract.",
                     },
                 )
-                assert duplicate.is_error is True
-                duplicate_error = json.loads(duplicate.content[0].text)
-                assert duplicate_error["error_code"] == "duplicate_candidate"
-                assert duplicate_error["existing_candidate_id"] == candidate_id
+                assert duplicate.is_error is False
+                duplicate_result = json.loads(duplicate.content[0].text)
+                assert duplicate_result["record_status"] == "duplicate_candidate"
+                assert duplicate_result["created"] is False
+                assert duplicate_result["candidate_id"] == candidate_id
+                assert duplicate_result["existing_candidate_id"] == candidate_id
 
                 candidates = _success_payload(
                     await session.call_tool(
