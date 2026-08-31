@@ -27,12 +27,19 @@ def record_research_intelligence_brief(store: JsonStore, *, project_name: str, b
         known = {str(c.get("candidate_id")) for c in load_candidate_intelligence(store)}
         if any(i not in known for i in ids): raise ToolInputError("candidate_not_found", "One or more candidate_ids do not exist.")
         now = utc_now_iso(); brief = {"brief_id": new_uuid(), "project_name": project, "brief_type": kind, "period_start": start, "period_end": end, "title": required_text(title, "title"), "executive_summary": required_text(executive_summary, "executive_summary"), "candidate_ids": ids, "search_queries": queries, "brief_markdown": required_text(brief_markdown, "brief_markdown"), "trigger_type": trigger, "created_at": now, "updated_at": now}
+        upsert_status = "created"
         def append(payload: Any) -> dict[str, list[dict[str, Any]]]:
+            nonlocal upsert_status, brief
             briefs = [x for x in (payload.get("briefs", []) if isinstance(payload, dict) else []) if isinstance(x, dict)]
             duplicate = any(b.get("project_name") == project and b.get("brief_type") == kind and b.get("period_start") == start and b.get("period_end") == end for b in briefs) if kind != "on_demand" else any(b.get("project_name") == project and b.get("brief_type") == kind and b.get("period_start") == start and b.get("period_end") == end and b.get("title") == brief["title"] and b.get("brief_markdown") == brief["brief_markdown"] for b in briefs)
-            if duplicate: raise ToolInputError("duplicate_intelligence_brief", "An equivalent intelligence brief already exists.")
+            if duplicate:
+                existing = next(b for b in briefs if b.get("project_name") == project and b.get("brief_type") == kind and b.get("period_start") == start and b.get("period_end") == end and (kind != "on_demand" or (b.get("title") == brief["title"] and b.get("brief_markdown") == brief["brief_markdown"])))
+                brief = {**existing, "title": brief["title"], "executive_summary": brief["executive_summary"], "candidate_ids": brief["candidate_ids"], "search_queries": brief["search_queries"], "brief_markdown": brief["brief_markdown"], "trigger_type": brief["trigger_type"], "updated_at": now}
+                briefs[briefs.index(existing)] = brief
+                upsert_status = "updated_existing"
+                return {"briefs": briefs}
             briefs.append(brief); return {"briefs": briefs}
-        store.update_json(RESEARCH_INTELLIGENCE_BRIEFS_FILE, {"briefs": []}, append); return {"status": "success", "brief": brief}
+        store.update_json(RESEARCH_INTELLIGENCE_BRIEFS_FILE, {"briefs": []}, append); return {"status": "success", "record_status": upsert_status, "created": upsert_status == "created", "updated": upsert_status == "updated_existing", "brief": brief}
     return run_tool("record_research_intelligence_brief", action)
 
 def list_research_intelligence_briefs(store: JsonStore, *, project_name: str | None = None, brief_type: str | None = None, start_date: str | None = None, end_date: str | None = None, limit: int = 10, trigger_type: str | None = None) -> dict[str, Any]:

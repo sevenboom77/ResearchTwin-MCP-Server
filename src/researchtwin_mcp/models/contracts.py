@@ -294,6 +294,9 @@ class ResearchIntelligenceBriefRecord(ContractModel):
 
 class RecordResearchIntelligenceBriefSuccess(ContractModel):
     status: Literal["success"]
+    record_status: Literal["created", "updated_existing"] = "created"
+    created: bool = True
+    updated: bool = False
     brief: ResearchIntelligenceBriefRecord
 
 

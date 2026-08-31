@@ -506,6 +506,30 @@ async def test_streamable_http_calls_all_nine_tools_and_persists_results(launche
                 assert shortlisted_candidate["record"]["status"] == "shortlisted"
                 assert shortlisted_candidate["record"]["user_note"] == "Protocol review is scheduled."
 
+                brief_payload = {
+                    "project_name": "ResearchTwin protocol test",
+                    "brief_type": "daily",
+                    "period_start": today,
+                    "period_end": today,
+                    "title": "Protocol daily brief",
+                    "executive_summary": "First wire brief",
+                    "brief_markdown": "# First",
+                    "candidate_ids": [candidate_id],
+                    "search_queries": ["first query"],
+                    "trigger_type": "manual",
+                }
+                first_brief = _success_payload(await session.call_tool("record_research_intelligence_brief", brief_payload))
+                second_payload = {**brief_payload, "title": "Updated wire brief", "executive_summary": "Latest wire brief", "brief_markdown": "# Latest", "candidate_ids": [candidate_id], "search_queries": ["latest query"], "trigger_type": "scheduled"}
+                second_brief_result = await session.call_tool("record_research_intelligence_brief", second_payload)
+                assert second_brief_result.is_error is False
+                second_brief = json.loads(second_brief_result.content[0].text)
+                assert second_brief["record_status"] == "updated_existing"
+                assert second_brief["created"] is False and second_brief["updated"] is True
+                assert second_brief["brief"]["brief_id"] == first_brief["brief"]["brief_id"]
+                listed_briefs = _success_payload(await session.call_tool("list_research_intelligence_briefs", {"project_name": "ResearchTwin protocol test", "brief_type": "daily", "limit": 10}))
+                assert listed_briefs["count"] == 1
+                assert listed_briefs["briefs"][0]["title"] == "Updated wire brief"
+
                 report = _success_payload(
                     await session.call_tool(
                         "generate_research_report",
