@@ -100,10 +100,12 @@ def record_candidate_intelligence(
 
         def append_candidate(payload: Any) -> dict[str, list[dict[str, Any]]]:
             candidates = _clean_candidates(payload)
-            if any(_is_duplicate_candidate(record, existing) for existing in candidates):
+            duplicate = next((existing for existing in candidates if _is_duplicate_candidate(record, existing)), None)
+            if duplicate is not None:
                 raise ToolInputError(
                     "duplicate_candidate",
                     "A candidate with the same title and source identity is already recorded.",
+                    existing_candidate_id=duplicate["candidate_id"],
                 )
             candidates.append(record)
             return {"candidates": candidates}

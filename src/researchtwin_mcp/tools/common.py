@@ -17,9 +17,10 @@ ResultT = TypeVar("ResultT", bound=dict[str, Any])
 class ToolInputError(ValueError):
     """A user-correctable tool-input problem with a stable error code."""
 
-    def __init__(self, error_code: str, message: str) -> None:
+    def __init__(self, error_code: str, message: str, **details: object) -> None:
         super().__init__(message)
         self.error_code = error_code
+        self.details = details
 
 
 def run_tool(operation: str, action: Callable[[], ResultT]) -> ResultT | dict[str, str]:
@@ -29,7 +30,7 @@ def run_tool(operation: str, action: Callable[[], ResultT]) -> ResultT | dict[st
         return action()
     except ToolInputError as exc:
         logger.info("%s rejected input error_code=%s", operation, exc.error_code)
-        return error_result(exc.error_code, str(exc))
+        return error_result(exc.error_code, str(exc), **exc.details)
     except ValidationError as exc:
         error_code = getattr(exc, "error_code", "validation_error")
         logger.info("%s rejected input error_code=%s", operation, error_code)
@@ -43,10 +44,10 @@ def run_tool(operation: str, action: Callable[[], ResultT]) -> ResultT | dict[st
         return error_result("internal_error", "The server could not complete this request safely.")
 
 
-def error_result(error_code: str, message: str) -> dict[str, str]:
+def error_result(error_code: str, message: str, **details: object) -> dict[str, Any]:
     """Return the standard, traceback-free error structure used by every tool."""
 
-    return {"status": "error", "error_code": error_code, "message": message}
+    return {"status": "error", "error_code": error_code, "message": message, **details}
 
 
 def required_text(value: object, field_name: str) -> str:

@@ -158,14 +158,27 @@ def test_record_candidate_intelligence_rejects_only_obvious_duplicates(tmp_path:
     assert url_candidate["status"] == "success"
     assert duplicate_url["status"] == "error"
     assert duplicate_url["error_code"] == "duplicate_candidate"
+    assert duplicate_url["existing_candidate_id"] == url_candidate["candidate_id"]
     assert no_url_candidate["status"] == "success"
     assert duplicate_no_url["status"] == "error"
     assert duplicate_no_url["error_code"] == "duplicate_candidate"
+    assert duplicate_no_url["existing_candidate_id"] == no_url_candidate["candidate_id"]
     assert same_title_other_source["status"] == "success"
     assert no_url_against_url["status"] == "error"
     assert no_url_against_url["error_code"] == "duplicate_candidate"
     assert url_against_no_url["status"] == "success"
     assert list_candidate_intelligence(store)["count"] == 4
+
+
+def test_duplicate_returns_existing_id_without_mutating_record(tmp_path: Path) -> None:
+    store = JsonStore(tmp_path / "runtime_data")
+    first = _record(store, title="Stable candidate", source_type="paper", source_url="https://example.test/stable")
+    before = list_candidate_intelligence(store)["candidates"][0]
+    duplicate = _record(store, title=" Stable   candidate ", source_type="github", source_url=" https://example.test/stable ")
+    after = list_candidate_intelligence(store)["candidates"]
+    assert duplicate["existing_candidate_id"] == first["candidate_id"]
+    assert len(after) == 1
+    assert after[0] == before
 
 
 @pytest.mark.parametrize(("confidence", "expected"), [(0, 0.0), (1, 1.0)])

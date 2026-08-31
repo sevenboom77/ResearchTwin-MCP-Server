@@ -98,6 +98,7 @@ class ToolFailure(ContractModel):
     status: Literal["error"]
     error_code: NonEmptyText
     message: NonEmptyText
+    existing_candidate_id: UUID | None = None
 
 
 class ResearchActivityRecord(ContractModel):
@@ -364,7 +365,7 @@ def error_tool_result(payload: Mapping[str, object]) -> CallToolResult:
 
     failure = ToolFailure.model_validate(payload)
     return CallToolResult(
-        content=[TextContent(text=failure.model_dump_json())],
+        content=[TextContent(text=failure.model_dump_json(exclude_none=True))],
         is_error=True,
     )
 

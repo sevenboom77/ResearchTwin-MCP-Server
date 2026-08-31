@@ -466,6 +466,21 @@ async def test_streamable_http_calls_all_nine_tools_and_persists_results(launche
                 assert candidate["record"]["status"] == "discovered"
                 assert candidate["record"]["confidence"] == 0.9
 
+                duplicate = await session.call_tool(
+                    "record_candidate_intelligence",
+                    {
+                        "title": "Protocol candidate paper",
+                        "source_type": "github",
+                        "source_url": " https://example.test/protocol-candidate ",
+                        "summary": "A duplicate must return the existing identifier.",
+                        "relevance_reason": "Wire-level duplicate contract.",
+                    },
+                )
+                assert duplicate.is_error is True
+                duplicate_error = json.loads(duplicate.content[0].text)
+                assert duplicate_error["error_code"] == "duplicate_candidate"
+                assert duplicate_error["existing_candidate_id"] == candidate_id
+
                 candidates = _success_payload(
                     await session.call_tool(
                         "list_candidate_intelligence",
