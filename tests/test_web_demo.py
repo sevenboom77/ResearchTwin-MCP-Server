@@ -461,7 +461,13 @@ def test_workflow_request_uses_prompt_and_biz_params(monkeypatch: pytest.MonkeyP
     adapter = workflow_adapter(
         monkeypatch,
         FakeWorkflowResponse(
-            payload={"output": {"text": json.dumps({"workflow_status": "success"})}}
+            payload={
+                "output": {
+                    "text": json.dumps(
+                        {"workflow_status": "success", "brief_id": "brief-1", "record_status": "created"}
+                    )
+                }
+            }
         ),
     )
     result = adapter.run_research_intelligence(
@@ -488,6 +494,8 @@ def test_workflow_request_uses_prompt_and_biz_params(monkeypatch: pytest.MonkeyP
     }
     assert FakeWorkflowHTTPClient.seen["headers"]["X-DashScope-WorkSpace"] == "workspace-demo"  # type: ignore[index]
     assert result["workflow_status"] == "success"
+    assert result["output"]["brief_id"] == "brief-1"
+    assert result["output"]["record_status"] == "created"
     assert "workflow-secret" not in request["headers"]
 
 
@@ -515,6 +523,8 @@ def test_workflow_success_reads_persisted_brief_after_semantic_success() -> None
                     "title": "Persisted Brief",
                     "executive_summary": "Summary",
                     "brief_markdown": "# Real",
+                    "brief_id": "brief-1",
+                    "record_status": "created",
                 },
             }
 
@@ -529,7 +539,187 @@ def test_workflow_success_reads_persisted_brief_after_semantic_success() -> None
     assert result["workflow_status"] == "success"
     assert result["persisted_match"] is True
     assert result["brief"] == brief
-    assert result["match_strategy"] == "project_name+brief_type+title+brief_markdown_exact"
+    assert result["match_strategy"] == "brief_id_exact"
+    assert result["workflow_output"]["record_status"] == "created"
+
+
+def test_workflow_brief_id_missing_does_not_fallback_to_content_match() -> None:
+    class Workflow:
+        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "workflow_status": "success",
+                    "project_name": "ResearchTwin",
+                    "brief_type": "on_demand",
+                    "title": "Expected",
+                    "brief_markdown": "# Expected",
+                    "brief_id": "new-brief-id",
+                }
+            }
+
+    class Client(FakeClient):
+        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
+            return {
+                "status": "success",
+                "briefs": [
+                    {
+                        "brief_id": "old-brief-id",
+                        "project_name": "ResearchTwin",
+                        "brief_type": "on_demand",
+                        "title": "Expected",
+                        "brief_markdown": "# Expected",
+                    }
+                ],
+            }
+
+    with pytest.raises(RemoteMCPError) as info:
+        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
+            {"query": "q", "brief_type": "on_demand"}
+        )
+    assert info.value.code == "persisted_brief_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("project_name", "OtherProject"), ("brief_type", "daily")],
+)
+def test_workflow_brief_id_match_requires_project_and_type(
+    field: str, value: str
+) -> None:
+    persisted_brief = {
+        "brief_id": "brief-1",
+        "project_name": "ResearchTwin",
+        "brief_type": "on_demand",
+        "title": "Persisted",
+        "brief_markdown": "# Persisted",
+    }
+    persisted_brief[field] = value
+
+    class Workflow:
+        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "workflow_status": "success",
+                    "project_name": "ResearchTwin",
+                    "brief_type": "on_demand",
+                    "title": "Persisted",
+                    "brief_markdown": "# Persisted",
+                    "brief_id": "brief-1",
+                }
+            }
+
+    class Client(FakeClient):
+        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
+            return {"status": "success", "briefs": [persisted_brief]}
+
+    with pytest.raises(RemoteMCPError) as info:
+        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
+            {"query": "q", "brief_type": "on_demand"}
+        )
+    assert info.value.code == "persisted_brief_mismatch"
+
+
+def test_invalid_record_status_does_not_turn_a_brief_id_match_into_success() -> None:
+    class Workflow:
+        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "workflow_status": "success",
+                    "project_name": "ResearchTwin",
+                    "brief_type": "on_demand",
+                    "brief_id": "brief-1",
+                    "record_status": None,
+                }
+            }
+
+    class Client(FakeClient):
+        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
+            return {
+                "status": "success",
+                "briefs": [
+                    {
+                        "brief_id": "brief-1",
+                        "project_name": "ResearchTwin",
+                        "brief_type": "on_demand",
+                    }
+                ],
+            }
+
+    with pytest.raises(RemoteMCPError) as info:
+        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
+            {"query": "q", "brief_type": "on_demand"}
+        )
+    assert info.value.code == "persisted_brief_mismatch"
+
+
+def test_legacy_workflow_uses_normalized_unique_fallback() -> None:
+    brief = {
+        "brief_id": "legacy-brief",
+        "project_name": "ResearchTwin",
+        "brief_type": "on_demand",
+        "title": "Legacy Brief",
+        "brief_markdown": "# Heading\nBody\n",
+    }
+
+    class Workflow:
+        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "workflow_status": "success",
+                    "project_name": "ResearchTwin",
+                    "brief_type": "on_demand",
+                    "title": "\r\nLegacy Brief\r\n",
+                    "brief_markdown": "\r\n# Heading\r\nBody\r\n",
+                }
+            }
+
+    class Client(FakeClient):
+        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
+            return {"status": "success", "briefs": [brief]}
+
+    result = DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
+        {"query": "q", "brief_type": "on_demand"}
+    )
+    assert result["persisted_match"] is True
+    assert result["brief"] == brief
+    assert result["match_strategy"] == (
+        "project_name+brief_type+title+brief_markdown_normalized_fallback"
+    )
+
+
+def test_legacy_workflow_real_markdown_difference_is_not_a_match() -> None:
+    class Workflow:
+        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "output": {
+                    "workflow_status": "success",
+                    "project_name": "ResearchTwin",
+                    "brief_type": "on_demand",
+                    "title": "Expected",
+                    "brief_markdown": "# Expected\nDifferent body",
+                }
+            }
+
+    class Client(FakeClient):
+        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
+            return {
+                "status": "success",
+                "briefs": [
+                    {
+                        "brief_id": "brief-1",
+                        "project_name": "ResearchTwin",
+                        "brief_type": "on_demand",
+                        "title": "Expected",
+                        "brief_markdown": "# Expected\nOriginal body",
+                    }
+                ],
+            }
+
+    with pytest.raises(RemoteMCPError) as info:
+        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
+            {"query": "q", "brief_type": "on_demand"}
+        )
+    assert info.value.code == "persisted_brief_mismatch"
 
 
 def test_workflow_semantic_failure_is_not_treated_as_success() -> None:
@@ -674,7 +864,7 @@ def test_partial_workflow_output_uses_only_present_identity_fields() -> None:
 
     result = DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence({"query": "q", "brief_type": "on_demand"})
     assert result["persisted_match"] is True
-    assert result["match_strategy"] == "project_name+brief_type+title_exact"
+    assert result["match_strategy"] == "project_name+brief_type+title_normalized_fallback"
     assert result["brief"]["brief_id"] == "brief-2"
 
 

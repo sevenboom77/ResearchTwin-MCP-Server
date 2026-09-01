@@ -285,36 +285,78 @@ def _match_persisted_brief(
     project_name: str,
     brief_type: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Match only fields actually present in the Workflow output.
+    """Match a persisted Brief using the strongest available identity.
 
-    The request supplies project and type, while title and Markdown are the
-    strongest content identity available from the verified Workflow contract.
-    No identifier is invented when the output cannot establish a match.
+    New Workflow output uses ``brief_id`` as the authoritative identity. The
+    title/Markdown comparison remains only for older Workflow output and is
+    deliberately limited to conservative whitespace normalization.
     """
+
+    for field, expected in (("project_name", project_name), ("brief_type", brief_type)):
+        if field in workflow_output and workflow_output[field] != expected:
+            return None, None
+
+    record_status = workflow_output.get("record_status")
+    if "record_status" in workflow_output and (
+        not isinstance(record_status, str) or not record_status.strip()
+    ):
+        return None, None
+
+    brief_id = workflow_output.get("brief_id")
+    if "brief_id" in workflow_output and brief_id is not None and not isinstance(brief_id, str):
+        return None, None
+    if isinstance(brief_id, str) and brief_id.strip():
+        id_matches = [brief for brief in briefs if brief.get("brief_id") == brief_id]
+        if len(id_matches) != 1:
+            return None, None
+        matching_brief = id_matches[0]
+        if (
+            matching_brief.get("project_name") != project_name
+            or matching_brief.get("brief_type") != brief_type
+        ):
+            return None, None
+        return matching_brief, "brief_id_exact"
 
     candidates = [
         brief
         for brief in briefs
         if brief.get("project_name") == project_name and brief.get("brief_type") == brief_type
     ]
-    for field, expected in (("project_name", project_name), ("brief_type", brief_type)):
-        if field in workflow_output and workflow_output[field] != expected:
+    expected_fields: dict[str, str] = {}
+    for field in ("title", "brief_markdown"):
+        if field not in workflow_output:
+            continue
+        value = workflow_output[field]
+        if not isinstance(value, str):
             return None, None
-    present_fields = [
-        field
-        for field in ("title", "brief_markdown")
-        if isinstance(workflow_output.get(field), str) and workflow_output[field]
-    ]
-    if not present_fields:
+        normalized = _normalise_match_text(value)
+        if not normalized:
+            return None, None
+        expected_fields[field] = normalized
+    if not expected_fields:
         return None, None
+
     matches = [
         brief
         for brief in candidates
-        if all(brief.get(field) == workflow_output[field] for field in present_fields)
+        if all(
+            isinstance(brief.get(field), str)
+            and _normalise_match_text(brief[field]) == expected
+            for field, expected in expected_fields.items()
+        )
     ]
     if len(matches) != 1:
         return None, None
-    return matches[0], "+".join(["project_name", "brief_type", *present_fields]) + "_exact"
+    return (
+        matches[0],
+        "+".join(["project_name", "brief_type", *expected_fields]) + "_normalized_fallback",
+    )
+
+
+def _normalise_match_text(value: str) -> str:
+    """Normalize only line endings and surrounding whitespace for fallback."""
+
+    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def _context_dict(payload: dict[str, Any]) -> dict[str, Any]:
