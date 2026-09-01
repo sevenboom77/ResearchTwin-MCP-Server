@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ResearchTwin / ResearchOS</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div><strong>ResearchTwin</strong><span>ResearchOS</span></div>
+        </div>
+        <nav class="navigation" aria-label="主导航">
+          <button class="nav-item is-active" data-view="overview">项目总览</button>
+          <button class="nav-item" data-view="intelligence">科研情报</button>
+          <button class="nav-item" data-view="candidates">候选情报</button>
+          <button class="nav-item" data-view="advisor">导师要求</button>
+          <button class="nav-item" data-view="activities">科研活动</button>
+          <button class="nav-item" data-view="reports">阶段报告</button>
+          <button class="nav-item" data-view="knowledge">项目知识</button>
+          <div class="nav-divider"></div>
+        </nav>
+        <div class="sidebar-note">单项目 Demo<br>Remote MCP 云端持久化模式</div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">RESEARCH WORKSPACE</p>
+            <h1 id="page-title">项目总览</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="connection-status" id="connection-status"><span class="status-dot"></span><span>正在检查 Cloud MCP</span></div>
+            <span class="refresh-time" id="refresh-time">尚未刷新</span>
+            <button class="button button-secondary" id="refresh-button" type="button">刷新</button>
+          </div>
+        </header>
+
+        <div id="global-message" class="message-area" role="status" aria-live="polite"></div>
+        <section id="view-root" aria-live="polite"></section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
