@@ -13,7 +13,7 @@ import httpx2
 import pytest
 
 from web_demo.app import DemoApplication, _match_persisted_brief, aggregate_overview, create_http_server
-from web_demo.agent import DEFAULT_RAG_TOP_K, MAX_RAG_TOP_K, MAX_SESSION_MESSAGES, ResearchTwinAgent, _compact_tool_result
+from web_demo.agent import DEFAULT_RAG_TOP_K, MAX_RAG_TOP_K, MAX_SESSION_MESSAGES, RAG_TOOL_NAME, ResearchTwinAgent, _compact_tool_result
 from web_demo.rag_client import (
     LocalVectorConfig,
     LocalVectorKnowledgeRetriever,
@@ -1030,6 +1030,87 @@ def test_agent_retrieves_researchtwin_docs_without_mixing_mcp() -> None:
     assert retriever.calls == [("RNN-based PPO", 3)]
     assert mcp.calls == []
     assert any(tool["function"]["name"] == "retrieve_researchtwin_docs" for tool in model.calls[0][1])
+
+
+def test_agent_explicit_rag_route_skips_planner_and_remote_mcp() -> None:
+    class NoListMCP(AgentMCP):
+        def list_tools(self) -> list[dict[str, object]]:
+            raise AssertionError("explicit RAG must not list or call Remote MCP")
+
+    retriever = FakeRetriever()
+    model = SequenceModel([{"content": "paper answer", "tool_calls": []}])
+    result = ResearchTwinAgent(NoListMCP(), model, retriever=retriever, system_prompt="system").chat(
+        session_id="explicit-rag", user_message="请检索论文资料，只根据知识库解释这篇论文。"
+    )
+    assert result["answer"] == "paper answer"
+    assert retriever.calls == [("请检索论文资料，只根据知识库解释这篇论文。", DEFAULT_RAG_TOP_K)]
+    assert len(model.calls) == 1
+    assert any(
+        message.get("role") == "system" and "只能依据刚刚检索到的 ResearchTwin_Docs 片段" in str(message.get("content"))
+        for message in model.calls[0][0]
+    )
+
+
+def test_agent_explicit_no_mcp_does_not_block_local_rag() -> None:
+    retriever = FakeRetriever()
+    model = SequenceModel([{"content": "knowledge answer", "tool_calls": []}])
+    result = ResearchTwinAgent(AgentMCP(), model, retriever=retriever, system_prompt="system").chat(
+        session_id="no-mcp-rag", user_message="请根据 ResearchTwin_Docs 回答，本次不要调用 MCP。"
+    )
+    assert result["answer"] == "knowledge answer"
+    assert len(retriever.calls) == 1
+    assert result["tool_calls"][0]["name"] == "retrieve_researchtwin_docs"
+    assert result["tool_calls"][0]["status"] == "success"
+
+
+def test_agent_explicit_mcp_context_route_skips_planner() -> None:
+    mcp = AgentMCP()
+    model = SequenceModel([{"content": "project answer", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, retriever=FakeRetriever(), system_prompt="system").chat(
+        session_id="explicit-mcp", user_message="请调用 ResearchTwin MCP 获取当前项目上下文。"
+    )
+    assert result["answer"] == "project answer"
+    assert [name for name, _ in mcp.calls] == ["get_research_context"]
+    assert len(model.calls) == 1
+    assert all(name != "retrieve_researchtwin_docs" for name, _ in mcp.calls)
+
+
+def test_agent_explicit_combined_route_calls_both_before_one_synthesis() -> None:
+    mcp = AgentMCP(result={"status": "success", "research_context": {"pending_tasks": ["next"]}})
+    retriever = FakeRetriever()
+    model = SequenceModel([{"content": "combined answer", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, retriever=retriever, system_prompt="system").chat(
+        session_id="explicit-combined", user_message="先检索 ResearchTwin_Docs 论文资料，然后调用 ResearchTwin MCP 获取当前项目上下文。"
+    )
+    assert result["answer"] == "combined answer"
+    assert [event["name"] for event in result["tool_calls"]] == [RAG_TOOL_NAME, "get_research_context"]
+    assert len(model.calls) == 1
+    assert any(
+        message.get("role") == "system" and "[论文资料]" in str(message.get("content"))
+        for message in model.calls[0][0]
+    )
+
+
+def test_agent_explicit_route_streams_without_tool_planner() -> None:
+    class StreamingFinalModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> dict[str, object]:
+            raise AssertionError("explicit stream route must skip non-stream planner")
+
+        def chat_stream(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> object:
+            self.calls += 1
+            assert tools == []
+            return iter([{"choices": [{"delta": {"content": "streamed"}}]}])
+
+    events = list(
+        ResearchTwinAgent(AgentMCP(), StreamingFinalModel(), retriever=FakeRetriever(), system_prompt="system").chat_stream(
+            session_id="explicit-stream", user_message="请检索论文资料并只根据知识库回答。"
+        )
+    )
+    assert events[-1]["event"] == "done"
+    assert events[-1]["data"]["tool_calls"][0]["name"] == RAG_TOOL_NAME
 
 
 def test_agent_combines_rag_and_mcp_before_final_synthesis() -> None:

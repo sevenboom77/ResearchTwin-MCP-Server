@@ -7,6 +7,7 @@ import re
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
@@ -25,6 +26,63 @@ MAX_TOOL_RESULT_CHARS = 12000
 DEFAULT_RAG_TOP_K = 5
 MAX_RAG_TOP_K = 5
 RAG_TOOL_NAME = "retrieve_researchtwin_docs"
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceIntent:
+    rag: bool
+    mcp: bool
+    explicit_no_mcp: bool
+    read_only: bool
+
+
+_RAG_SOURCE_PHRASES = (
+    "researchtwin_docs",
+    "researchtwin docs",
+    "knowledge base",
+    "知识库",
+    "论文资料",
+    "检索论文",
+    "检索 论文",
+    "检索论文资料",
+    "根据这篇论文",
+    "根据论文",
+    "从论文资料中",
+    "从论文资料",
+    "根据 researchtwin_docs",
+    "检索 researchtwin_docs",
+    "只根据知识库",
+    "只根据 researchtwin_docs",
+)
+_RAG_FACT_ACTIONS = ("检索", "根据", "解释", "总结", "为什么", "主要", "未来")
+_MCP_SOURCE_PHRASES = (
+    "researchtwin mcp",
+    "获取当前项目上下文",
+    "读取最新项目状态",
+    "根据项目记录",
+    "导师要求",
+    "科研活动",
+    "当前待办",
+)
+_NO_MCP_PHRASES = (
+    "不要调用 mcp",
+    "不需要调用 mcp",
+    "本次不要调用 mcp",
+    "不调用 mcp",
+    "不要使用 mcp",
+)
+_READ_ONLY_PHRASES = (
+    "只读",
+    "不写入",
+    "不要写入",
+    "不允许写入",
+    "不修改",
+    "不要修改",
+    "不改变数据",
+    "仅分析",
+    "只分析",
+)
+_WRITE_REQUEST_PHRASES = ("记录", "写入", "保存", "更新", "同步", "添加", "创建")
 
 WRITE_TOOLS = frozenset(
     {
@@ -125,6 +183,27 @@ def _sync_confirmation_authorized(user_message: str, arguments: dict[str, Any]) 
     )
 
 
+def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _detect_source_intent(user_message: str) -> _SourceIntent:
+    """Detect only explicit source instructions; ambiguous requests remain model-routed."""
+
+    text = user_message.casefold()
+    explicit_no_mcp = _contains_phrase(text, _NO_MCP_PHRASES)
+    rag = _contains_phrase(text, _RAG_SOURCE_PHRASES)
+    if not rag and "论文" in text and _contains_phrase(text, _RAG_FACT_ACTIONS):
+        rag = True
+    mcp = _contains_phrase(text, _MCP_SOURCE_PHRASES) and not explicit_no_mcp
+    read_only = _contains_phrase(text, _READ_ONLY_PHRASES)
+    return _SourceIntent(rag=rag, mcp=mcp, explicit_no_mcp=explicit_no_mcp, read_only=read_only)
+
+
+def _write_requested(user_message: str) -> bool:
+    return _contains_phrase(user_message.casefold(), _WRITE_REQUEST_PHRASES)
+
+
 class ResearchTwinAgent:
     """Keep short-lived chat history in memory; durable state remains in MCP/NAS."""
 
@@ -147,6 +226,74 @@ class ResearchTwinAgent:
         self._sessions: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _route_can_skip_planner(intent: _SourceIntent, user_message: str) -> bool:
+        return (intent.rag or intent.mcp) and not _write_requested(user_message)
+
+    def _route_tool_calls(self, intent: _SourceIntent, user_message: str) -> list[dict[str, Any]]:
+        calls: list[dict[str, Any]] = []
+        if intent.rag:
+            calls.append(
+                {
+                    "id": "route-rag",
+                    "type": "function",
+                    "function": {
+                        "name": RAG_TOOL_NAME,
+                        "arguments": json.dumps(
+                            {"query": user_message, "top_k": DEFAULT_RAG_TOP_K},
+                            ensure_ascii=False,
+                        ),
+                    },
+                }
+            )
+        if intent.mcp:
+            arguments: dict[str, Any] = {}
+            config = getattr(self.mcp, "config", None)
+            project_name = getattr(config, "project_name", None)
+            if isinstance(project_name, str) and project_name.strip():
+                arguments["project_name"] = project_name.strip()
+            calls.append(
+                {
+                    "id": "route-mcp-context",
+                    "type": "function",
+                    "function": {"name": "get_research_context", "arguments": json.dumps(arguments)},
+                }
+            )
+        return calls
+
+    @staticmethod
+    def _append_route_constraint(messages: list[dict[str, Any]], intent: _SourceIntent) -> None:
+        if intent.rag and not intent.mcp:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "本次回答只能依据刚刚检索到的 ResearchTwin_Docs 片段。"
+                        "如果片段不足以支持结论，请明确说明不知道，不要补充项目记录或模型常识。"
+                    ),
+                }
+            )
+        elif intent.rag and intent.mcp:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "请严格区分来源：论文检索结果属于[论文资料]，MCP 返回属于[项目记录]，"
+                        "结合两者的判断属于[Agent推断]。"
+                    ),
+                }
+            )
+
+    @staticmethod
+    def _log_route(intent: _SourceIntent, *, skipped: bool, write_requested: bool) -> None:
+        mode = "explicit" if skipped else "planner"
+        print(
+            f"[route] mode={mode} rag={str(intent.rag).lower()} "
+            f"mcp={str(intent.mcp).lower()} write={str(write_requested).lower()} "
+            f"planner_skipped={str(skipped).lower()}",
+            flush=True,
+        )
+
     def chat(self, *, session_id: str | None, user_message: str, request_id: str | None = None) -> dict[str, Any]:
         current_session = session_id or str(uuid.uuid4())
         perf = _PerfTrace(request_id or str(uuid.uuid4())[:12])
@@ -156,11 +303,32 @@ class ResearchTwinAgent:
         history.append({"role": "user", "content": user_message})
         perf.history_messages = len(history)
         perf.history_chars = sum(len(str(item.get("content", ""))) for item in history)
-        started = time.perf_counter()
-        tools = self._model_tools(self.mcp.list_tools())
-        perf.mark("mcp.tools_list", started)
         messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}, *history]
         events: list[dict[str, Any]] = []
+
+        intent = _detect_source_intent(user_message)
+        write_requested = _write_requested(user_message)
+        if self._route_can_skip_planner(intent, user_message):
+            self._log_route(intent, skipped=True, write_requested=write_requested)
+            self._append_route_constraint(messages, intent)
+            route_calls = self._route_tool_calls(intent, user_message)
+            messages.append({"role": "assistant", "content": "", "tool_calls": route_calls})
+            for tool_call in route_calls:
+                started = time.perf_counter()
+                event, tool_message = self._execute_tool_call(tool_call, user_message)
+                name = event.get("name", "tool")
+                if name != RAG_TOOL_NAME:
+                    perf.mark(f"mcp.{name}", started)
+                perf.observe_tool(str(name), tool_message)
+                events.append(event)
+                messages.append(tool_message)
+            return self._synthesize_chat(current_session, messages, events, perf)
+
+        self._log_route(intent, skipped=False, write_requested=write_requested)
+        started = time.perf_counter()
+        tool_schemas = [] if intent.explicit_no_mcp else self.mcp.list_tools()
+        tools = self._model_tools(tool_schemas)
+        perf.mark("mcp.tools_list", started)
 
         for decision_round in range(self.max_tool_decision_rounds):
             started = time.perf_counter()
@@ -242,14 +410,51 @@ class ResearchTwinAgent:
         history.append({"role": "user", "content": user_message})
         perf.history_messages = len(history)
         perf.history_chars = sum(len(str(item.get("content", ""))) for item in history)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}, *history]
+        events: list[dict[str, Any]] = []
+        intent = _detect_source_intent(user_message)
+        write_requested = _write_requested(user_message)
+        if self._route_can_skip_planner(intent, user_message):
+            self._log_route(intent, skipped=True, write_requested=write_requested)
+            yield {"event": "status", "data": {"message": "正在处理请求"}}
+            self._append_route_constraint(messages, intent)
+            route_calls = self._route_tool_calls(intent, user_message)
+            messages.append({"role": "assistant", "content": "", "tool_calls": route_calls})
+            for tool_call in route_calls:
+                function = tool_call["function"]
+                name = function["name"]
+                if name == RAG_TOOL_NAME:
+                    yield {"event": "status", "data": {"message": "正在检索 ResearchTwin_Docs"}}
+                    yield {"event": "source", "data": {"type": "knowledge", "name": "ResearchTwin_Docs"}}
+                else:
+                    yield {"event": "status", "data": {"message": "正在读取项目记录"}}
+                yield {"event": "tool", "data": {"name": name, "status": "running"}}
+                tool_started = time.perf_counter()
+                try:
+                    event, tool_message = self._execute_tool_call(tool_call, user_message)
+                except Exception as exc:
+                    raise _stream_stage_error("rag" if name == RAG_TOOL_NAME else "mcp_tool_call", exc) from exc
+                if name != RAG_TOOL_NAME:
+                    perf.mark(f"mcp.{name}", tool_started)
+                perf.observe_tool(name, tool_message)
+                events.append(event)
+                messages.append(tool_message)
+                final_status = "completed" if event["status"] == "success" else event["status"]
+                tool_data: dict[str, Any] = {"name": name, "status": final_status}
+                if event.get("error_code"):
+                    tool_data["error_code"] = event["error_code"]
+                yield {"event": "tool", "data": tool_data}
+            yield from self._stream_final_synthesis(current_session, messages, events, perf)
+            return
+
+        self._log_route(intent, skipped=False, write_requested=write_requested)
         started = time.perf_counter()
         try:
-            tools = self._model_tools(self.mcp.list_tools())
+            tool_schemas = [] if intent.explicit_no_mcp else self.mcp.list_tools()
+            tools = self._model_tools(tool_schemas)
             perf.mark("mcp.tools_list", started)
         except Exception as exc:
             raise _stream_stage_error("mcp_tool_list", exc) from exc
-        messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}, *history]
-        events: list[dict[str, Any]] = []
         yield {"event": "status", "data": {"message": "正在理解请求"}}
 
         for decision_round in range(self.max_tool_decision_rounds):
@@ -439,6 +644,8 @@ class ResearchTwinAgent:
             return self._blocked_tool(call_id, name, "工具参数无法解析，已阻止这次调用。", "invalid_tool_arguments")
         if not isinstance(arguments, dict):
             return self._blocked_tool(call_id, name, "工具参数不是对象，已阻止这次调用。", "invalid_tool_arguments")
+        if _detect_source_intent(user_message).explicit_no_mcp:
+            return self._blocked_tool(call_id, name, "本次请求已明确禁止调用 Remote MCP。", "mcp_disabled")
         if name in WRITE_TOOLS and not _explicit_write_authorized(user_message):
             return self._blocked_tool(call_id, name, "只有用户明确授权后才能执行持久化写操作。", "write_confirmation_required")
         if name == "sync_project_knowledge_to_bailian" and not _sync_confirmation_authorized(user_message, arguments):
