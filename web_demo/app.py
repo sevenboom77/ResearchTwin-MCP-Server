@@ -10,6 +10,10 @@ import argparse
 import json
 import os
 import sys
+import time
+import traceback
+import uuid
+from collections.abc import Iterator
 from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +29,9 @@ except ImportError:  # pragma: no cover - the main project already depends on py
 if __package__ in {None, ""}:  # Support ``python web_demo/app.py`` from the repository root.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from web_demo.mcp_client import RemoteMCPClient, RemoteMCPConfig, RemoteMCPError
+from web_demo.mcp_client import RemoteMCPClient, RemoteMCPConfig, RemoteMCPError, _redact
+from web_demo.agent import ResearchTwinAgent
+from web_demo.model_client import ModelClient
 from web_demo.workflow_adapter import BailianWorkflowAdapter
 
 
@@ -36,10 +42,11 @@ STATIC_DIR = WEB_DEMO_DIR / "static"
 class DemoApplication:
     """Application services separated from HTTP transport for easy testing."""
 
-    def __init__(self, client: Any, *, project_name: str, workflow: Any | None = None) -> None:
+    def __init__(self, client: Any, *, project_name: str, workflow: Any | None = None, agent: Any | None = None) -> None:
         self.client = client
         self.project_name = project_name
-        self.workflow = workflow or BailianWorkflowAdapter.from_env()
+        self.workflow = workflow if workflow is not None else BailianWorkflowAdapter.from_env()
+        self.agent = agent
 
     def health(self) -> dict[str, Any]:
         return {
@@ -110,6 +117,33 @@ class DemoApplication:
 
     def workflow_status(self) -> dict[str, object]:
         return self.workflow.status()
+
+    def chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _validate_chat_payload(payload)
+        if self.agent is None:
+            self.agent = ResearchTwinAgent(self.client, ModelClient.from_env())
+        request_id = str(uuid.uuid4())[:12]
+        started = time.perf_counter()
+        try:
+            return self.agent.chat(session_id=payload.get("session_id"), user_message=payload["message"].strip(), request_id=request_id)
+        finally:
+            _log_perf_total(request_id, started)
+
+    def chat_stream(self, payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        _validate_chat_payload(payload)
+        if self.agent is None:
+            self.agent = ResearchTwinAgent(self.client, ModelClient.from_env())
+        request_id = str(uuid.uuid4())[:12]
+        started = time.perf_counter()
+        stream = self.agent.chat_stream(session_id=payload.get("session_id"), user_message=payload["message"].strip(), request_id=request_id)
+
+        def tracked_stream() -> Iterator[dict[str, Any]]:
+            try:
+                yield from stream
+            finally:
+                _log_perf_total(request_id, started)
+
+        return tracked_stream()
 
     def record_advisor_instruction(self, payload: dict[str, Any]) -> dict[str, Any]:
         _validate_payload(payload, ADVISOR_FIELDS, ("instruction", "task", "priority"))
@@ -221,6 +255,7 @@ ACTIVITY_FIELDS = frozenset(
 )
 REPORT_FIELDS = frozenset({"start_date", "end_date", "report_type", "project_name"})
 INTELLIGENCE_FIELDS = frozenset({"query", "project_name", "brief_type", "limit_per_source", "max_candidates"})
+CHAT_FIELDS = frozenset({"session_id", "message"})
 ACTIVITY_TYPES = frozenset(
     {"analysis", "coding", "data_collection", "debugging", "experiment", "meeting", "other", "paper_reading", "writing"}
 )
@@ -267,6 +302,16 @@ def _validate_payload(payload: dict[str, Any], allowed: frozenset[str], required
                 raise RemoteMCPError("invalid_request", f"字段 {field} 必须是文本或文本列表。", detail=f"Invalid type for {field}.")
 
 
+def _validate_chat_payload(payload: dict[str, Any]) -> None:
+    _validate_payload(payload, CHAT_FIELDS, ("message",))
+    session_id = payload.get("session_id")
+    if session_id is not None and (not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 128):
+        raise RemoteMCPError("invalid_request", "会话 ID 格式无法识别。", detail="session_id must be a non-empty string of at most 128 characters.")
+    message = payload.get("message")
+    if isinstance(message, str) and len(message) > 20000:
+        raise RemoteMCPError("invalid_request", "消息过长，请缩小问题范围。", detail="message exceeds 20,000 characters.")
+
+
 def _list_from_payload(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
     values = payload.get(key)
     if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
@@ -285,12 +330,7 @@ def _match_persisted_brief(
     project_name: str,
     brief_type: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Match a persisted Brief using the strongest available identity.
-
-    New Workflow output uses ``brief_id`` as the authoritative identity. The
-    title/Markdown comparison remains only for older Workflow output and is
-    deliberately limited to conservative whitespace normalization.
-    """
+    """Match a persisted Brief using the strongest available identity."""
 
     for field, expected in (("project_name", project_name), ("brief_type", brief_type)):
         if field in workflow_output and workflow_output[field] != expected:
@@ -310,10 +350,7 @@ def _match_persisted_brief(
         if len(id_matches) != 1:
             return None, None
         matching_brief = id_matches[0]
-        if (
-            matching_brief.get("project_name") != project_name
-            or matching_brief.get("brief_type") != brief_type
-        ):
+        if matching_brief.get("project_name") != project_name or matching_brief.get("brief_type") != brief_type:
             return None, None
         return matching_brief, "brief_id_exact"
 
@@ -347,10 +384,7 @@ def _match_persisted_brief(
     ]
     if len(matches) != 1:
         return None, None
-    return (
-        matches[0],
-        "+".join(["project_name", "brief_type", *expected_fields]) + "_normalized_fallback",
-    )
+    return matches[0], "+".join(["project_name", "brief_type", *expected_fields]) + "_normalized_fallback"
 
 
 def _normalise_match_text(value: str) -> str:
@@ -451,6 +485,28 @@ def _safe_error_payload(error: RemoteMCPError) -> dict[str, Any]:
     return {"status": "error", **error.as_dict()}
 
 
+def _log_stream_error(error: Exception) -> None:
+    detail = getattr(error, "detail", "")
+    stage = "server_stream"
+    if isinstance(detail, str) and detail.startswith("stage="):
+        stage = detail.split(";", 1)[0].removeprefix("stage=") or stage
+    traceback_text = _redact(traceback.format_exc())
+    safe_message = _redact(str(error))
+    safe_detail = _redact(str(detail))
+    print(
+        f"[ResearchTwin] chat_stream failed at stage={stage} "
+        f"type={type(error).__name__} message={safe_message} detail={safe_detail}\n"
+        f"{traceback_text}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _log_perf_total(request_id: str, started: float) -> None:
+    duration_ms = (time.perf_counter() - started) * 1000
+    print(f"[perf] request={request_id} stage=chat.total duration_ms={duration_ms:.1f}", flush=True)
+
+
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
@@ -470,11 +526,15 @@ def make_handler(application: DemoApplication) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:  # noqa: N802 - explicit local mutation/invocation routes only.
             path = urlsplit(self.path).path
+            if path == "/api/chat/stream":
+                self._handle_chat_stream()
+                return
             handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
                 "/api/advisor-instructions": application.record_advisor_instruction,
                 "/api/activities": application.record_activity,
                 "/api/reports": application.generate_report,
                 "/api/intelligence/generate": application.generate_intelligence,
+                "/api/chat": application.chat,
             }
             handler = handlers.get(path)
             if handler is None:
@@ -513,6 +573,69 @@ def make_handler(application: DemoApplication) -> type[BaseHTTPRequestHandler]:
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     {"status": "error", "error_code": "internal_error", "message": "本地 Demo 处理请求时出现问题。"},
                 )
+
+        def _handle_chat_stream(self) -> None:
+            try:
+                payload = self._read_json_payload()
+                stream = application.chat_stream(payload)
+            except RemoteMCPError as exc:
+                status = HTTPStatus.SERVICE_UNAVAILABLE if exc.code != "invalid_request" else HTTPStatus.BAD_REQUEST
+                self._send_json(status, _safe_error_payload(exc))
+                return
+            except Exception:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"status": "error", "error_code": "internal_error", "message": "本地 Demo 处理请求时出现问题。"},
+                )
+                return
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                for event in stream:
+                    self._send_sse(event)
+            except RemoteMCPError as exc:
+                _log_stream_error(exc)
+                self._send_sse({"event": "error", "data": _safe_error_payload(exc)})
+            except Exception as exc:
+                _log_stream_error(exc)
+                self._send_sse(
+                    {
+                        "event": "error",
+                        "data": {
+                            "status": "error",
+                            "error_code": "internal_error",
+                            "message": "本地 Demo 处理请求时出现问题。",
+                        },
+                    }
+                )
+
+        def _read_json_payload(self) -> dict[str, Any]:
+            raw_length = self.headers.get("Content-Length", "0")
+            length = int(raw_length)
+            if length < 0 or length > 1_000_000:
+                raise RemoteMCPError("invalid_request", "提交内容过大，无法处理。", detail="Request body exceeds 1 MB.")
+            body = self.rfile.read(length)
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RemoteMCPError("invalid_request", "提交内容不是有效的 JSON。", detail="Request body could not be decoded as JSON.") from exc
+            if not isinstance(payload, dict):
+                raise RemoteMCPError("invalid_request", "提交内容必须是 JSON 对象。", detail="Request body was not an object.")
+            return payload
+
+        def _send_sse(self, event: dict[str, Any]) -> None:
+            event_name = event.get("event")
+            data = event.get("data", {})
+            if not isinstance(event_name, str) or event_name not in {"status", "source", "tool", "delta", "done", "error"}:
+                return
+            frame = f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n".encode("utf-8")
+            self.wfile.write(frame)
+            self.wfile.flush()
 
         def _handle_api(self, path: str) -> None:
             handlers: dict[str, Callable[[], dict[str, Any]]] = {

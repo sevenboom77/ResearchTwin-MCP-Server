@@ -10,6 +10,9 @@ import asyncio
 import json
 import os
 import re
+import threading
+import time
+import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -21,17 +24,26 @@ from mcp.client.streamable_http import streamable_http_client
 DEFAULT_MCP_URL = "https://researcp-remote-rfxkxlnciq.cn-beijing.fcapp.run/mcp"
 DEFAULT_PROJECT = "ResearchTwin"
 DEFAULT_TIMEOUT_SECONDS = 20.0
+TOOLS_CACHE_TTL_SECONDS = 900.0
 
 ALLOWED_TOOLS = frozenset(
     {
-        "get_project_status",
-        "get_research_context",
-        "list_candidate_intelligence",
-        "list_research_intelligence_briefs",
-        "list_project_knowledge",
-        "record_advisor_instruction",
         "record_research_activity",
+        "list_research_activities",
+        "update_project_status",
+        "get_project_status",
+        "record_advisor_instruction",
+        "record_candidate_intelligence",
+        "list_candidate_intelligence",
+        "update_candidate_status",
         "generate_research_report",
+        "get_research_context",
+        "search_external_research",
+        "record_research_intelligence_brief",
+        "list_research_intelligence_briefs",
+        "prepare_project_knowledge",
+        "sync_project_knowledge_to_bailian",
+        "list_project_knowledge",
     }
 )
 
@@ -180,6 +192,9 @@ class RemoteMCPClient:
 
     def __init__(self, config: RemoteMCPConfig) -> None:
         self.config = config
+        self._tools_cache: list[dict[str, Any]] | None = None
+        self._tools_cache_at = 0.0
+        self._tools_cache_lock = threading.Lock()
 
     def _ensure_configured(self) -> None:
         if not self.config.configured:
@@ -207,6 +222,41 @@ class RemoteMCPClient:
                     result = await session.call_tool(name, arguments)
                     return parse_mcp_result(result, secrets=(self.config.token,) if self.config.token else ())
 
+    async def _list_tools_async(self) -> list[dict[str, Any]]:
+        headers = {"Authorization": f"Bearer {self.config.token}"} if self.config.token else {}
+        timeout = httpx2.Timeout(self.config.timeout_seconds)
+        async with httpx2.AsyncClient(
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=True,
+            trust_env=False,
+        ) as http_client:
+            async with streamable_http_client(self.config.url, http_client=http_client) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    result = await session.list_tools()
+                    tools: list[dict[str, Any]] = []
+                    for tool in result.tools:
+                        raw = tool.model_dump(by_alias=True, mode="json") if hasattr(tool, "model_dump") else {}
+                        name = raw.get("name") or getattr(tool, "name", None)
+                        schema = raw.get("inputSchema") or raw.get("input_schema") or getattr(tool, "inputSchema", None)
+                        if not isinstance(name, str) or not isinstance(schema, dict):
+                            raise RemoteMCPError(
+                                "invalid_response",
+                                "Remote MCP tools/list 返回了无法识别的工具 schema。",
+                                detail="Every tool must include a name and inputSchema object.",
+                            )
+                        if name not in ALLOWED_TOOLS:
+                            continue
+                        tools.append(
+                            {
+                                "name": name,
+                                "description": raw.get("description") or getattr(tool, "description", "") or "",
+                                "inputSchema": schema,
+                            }
+                        )
+                    return sorted(tools, key=lambda item: item["name"])
+
     def call_tool(self, name: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Call one of the explicitly allowed Phase 1/2 tools through Remote MCP."""
 
@@ -226,6 +276,28 @@ class RemoteMCPClient:
                 exc,
                 secrets=(self.config.token,) if self.config.token else (),
             ) from exc
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        """Return real Remote MCP tools/list schemas for model tool calling."""
+
+        self._ensure_configured()
+        now = time.monotonic()
+        with self._tools_cache_lock:
+            if self._tools_cache is not None and now - self._tools_cache_at < TOOLS_CACHE_TTL_SECONDS:
+                return copy.deepcopy(self._tools_cache)
+        try:
+            tools = asyncio.run(self._list_tools_async())
+        except RemoteMCPError:
+            raise
+        except Exception as exc:
+            raise _normalise_exception(
+                exc,
+                secrets=(self.config.token,) if self.config.token else (),
+            ) from exc
+        with self._tools_cache_lock:
+            self._tools_cache = copy.deepcopy(tools)
+            self._tools_cache_at = time.monotonic()
+        return tools
 
     @staticmethod
     def _success_payload(payload: dict[str, Any], tool_name: str) -> dict[str, Any]:
@@ -248,26 +320,7 @@ class RemoteMCPClient:
                 "message": "Remote MCP 未配置：本地 token 尚未设置。",
             }
         try:
-            headers = {"Authorization": f"Bearer {self.config.token}"}
-            timeout = httpx2.Timeout(self.config.timeout_seconds)
-
-            async def probe() -> list[str]:
-                async with httpx2.AsyncClient(
-                    headers=headers,
-                    timeout=timeout,
-                    follow_redirects=True,
-                    trust_env=False,
-                ) as http_client:
-                    async with streamable_http_client(self.config.url, http_client=http_client) as (
-                        read_stream,
-                        write_stream,
-                    ):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            tools = await session.list_tools()
-                            return sorted(tool.name for tool in tools.tools)
-
-            tool_names = asyncio.run(probe())
+            tool_names = [tool["name"] for tool in self.list_tools()]
             return {
                 "configured": True,
                 "reachable": True,

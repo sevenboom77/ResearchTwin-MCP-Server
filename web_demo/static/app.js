@@ -1,8 +1,9 @@
 (function () {
   "use strict";
 
-  var state = { overview: null, health: null, view: "overview" };
+  var state = { overview: null, health: null, view: "overview", chat: [], sessionId: null };
   var root = document.getElementById("view-root");
+  var assistantRoot = document.getElementById("assistant-root");
   var title = document.getElementById("page-title");
   var message = document.getElementById("global-message");
   var connection = document.getElementById("connection-status");
@@ -167,14 +168,15 @@
   }
 
   function appendInlineMarkdown(parent, source) {
-    var pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+    var pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|\*[^*\n]+\*|_[^_\n]+_)/g;
     var text = String(source || ""); var cursor = 0; var match;
     while ((match = pattern.exec(text)) !== null) {
       if (match.index > cursor) parent.appendChild(el("span", "", text.slice(cursor, match.index)));
       var token = match[0];
       if (token.indexOf("**") === 0) parent.appendChild(el("strong", "", token.slice(2, -2)));
       else if (token.indexOf("`") === 0) parent.appendChild(el("code", "", token.slice(1, -1)));
-      else { var link = el("a", "", token.slice(1, token.indexOf("]("))); var url = match[2]; link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; parent.appendChild(link); }
+      else if (token.indexOf("[") === 0) { var link = el("a", "", token.slice(1, token.indexOf("]("))); var url = match[2]; link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; parent.appendChild(link); }
+      else if (token.indexOf("*") === 0 || token.indexOf("_") === 0) parent.appendChild(el("em", "", token.slice(1, -1)));
       cursor = match.index + token.length;
     }
     if (cursor < text.length) parent.appendChild(el("span", "", text.slice(cursor)));
@@ -187,10 +189,11 @@
       var heading = line.match(/^(#{1,3})\s+(.+)$/);
       if (heading) { var headingNode = el("h" + heading[1].length, "", ""); appendInlineMarkdown(headingNode, heading[2]); container.appendChild(headingNode); index += 1; continue; }
       if (/^\s*---+\s*$/.test(line)) { container.appendChild(document.createElement("hr")); index += 1; continue; }
+      if (/^\s*```/.test(line)) { var codeLines = []; index += 1; while (index < lines.length && !/^\s*```/.test(lines[index])) { codeLines.push(lines[index]); index += 1; } if (index < lines.length) index += 1; var codeBlock = document.createElement("pre"); codeBlock.className = "markdown-code"; codeBlock.appendChild(el("code", "", codeLines.join("\n"))); container.appendChild(codeBlock); continue; }
       if (/^>\s?/.test(line)) { var quote = el("blockquote", "", ""); while (index < lines.length && /^>\s?/.test(lines[index])) { appendInlineMarkdown(quote, lines[index].replace(/^>\s?/, "")); if (index + 1 < lines.length && /^>\s?/.test(lines[index + 1])) quote.appendChild(document.createElement("br")); index += 1; } container.appendChild(quote); continue; }
-      var unordered = /^\s*-\s+(.+)$/.exec(line); var ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
-      if (unordered || ordered) { var list = document.createElement(ordered ? "ol" : "ul"); while (index < lines.length) { var itemMatch = (ordered ? /^\s*\d+\.\s+(.+)$/ : /^\s*-\s+(.+)$/).exec(lines[index]); if (!itemMatch) break; var item = el("li", "", ""); appendInlineMarkdown(item, itemMatch[1]); list.appendChild(item); index += 1; } container.appendChild(list); continue; }
-      var paragraph = el("p", "", ""); appendInlineMarkdown(paragraph, line); index += 1; while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+/.test(lines[index]) && !/^\s*(?:-|\d+\.|>|---)/.test(lines[index])) { paragraph.appendChild(document.createElement("br")); appendInlineMarkdown(paragraph, lines[index]); index += 1; } container.appendChild(paragraph);
+      var unordered = /^\s*[-+*]\s+(.+)$/.exec(line); var ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+      if (unordered || ordered) { var list = document.createElement(ordered ? "ol" : "ul"); while (index < lines.length) { var itemMatch = (ordered ? /^\s*\d+\.\s+(.+)$/ : /^\s*[-+*]\s+(.+)$/).exec(lines[index]); if (!itemMatch) break; var item = el("li", "", ""); appendInlineMarkdown(item, itemMatch[1]); list.appendChild(item); index += 1; } container.appendChild(list); continue; }
+      var paragraph = el("p", "", ""); appendInlineMarkdown(paragraph, line); index += 1; while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+/.test(lines[index]) && !/^\s*(?:[-+*]|\d+\.|>|---|```)/.test(lines[index])) { paragraph.appendChild(document.createElement("br")); appendInlineMarkdown(paragraph, lines[index]); index += 1; } container.appendChild(paragraph);
     }
     return container;
   }
@@ -242,6 +245,54 @@
     if (data.brief) root.appendChild(renderBriefCard(data.brief, "历史最新科研情报", "历史记录")); else root.appendChild(el("div", "empty-state", "暂无历史科研情报 Brief。当前页面不会编造结果。"));
   }
 
+  function chatSessionId() {
+    if (state.sessionId) return state.sessionId;
+    try { state.sessionId = sessionStorage.getItem("researchtwin-chat-session") || ""; } catch (error) { state.sessionId = ""; }
+    if (!state.sessionId) { state.sessionId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + "-local"; try { sessionStorage.setItem("researchtwin-chat-session", state.sessionId); } catch (error) {} }
+    return state.sessionId;
+  }
+
+  async function consumeChatStream(payload, onEvent) {
+    var response = await fetch("/api/chat/stream", { method: "POST", headers: { "Accept": "text/event-stream", "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!response.ok) {
+      var errorData = {};
+      try { errorData = await response.json(); } catch (error) {}
+      var requestError = new Error(errorData.message || "助手请求失败。"); requestError.detail = errorData.detail || "HTTP " + response.status; throw requestError;
+    }
+    if (!response.body || !response.body.getReader) throw new Error("浏览器不支持助手流式响应。");
+    var reader = response.body.getReader(); var decoder = new TextDecoder("utf-8"); var buffer = ""; var receivedDone = false;
+    function parseFrame(frame) {
+      var eventName = "message"; var dataText = "";
+      frame.split(/\r?\n/).forEach(function (line) { if (line.indexOf("event:") === 0) eventName = line.slice(6).trim(); else if (line.indexOf("data:") === 0) dataText += line.slice(5).trim(); });
+      if (!dataText) return;
+      var data; try { data = JSON.parse(dataText); } catch (error) { throw new Error("助手返回了无法解析的流式事件。"); }
+      if (eventName === "done") receivedDone = true;
+      if (eventName === "error") { var streamError = new Error(data.message || "助手处理失败。"); streamError.detail = data.detail || data.error_code || "流式请求失败"; throw streamError; }
+      onEvent(eventName, data);
+    }
+    while (true) {
+      var part = await reader.read();
+      buffer += decoder.decode(part.value || new Uint8Array(), { stream: !part.done });
+      var frames = buffer.split(/\r?\n\r?\n/); buffer = frames.pop() || ""; frames.forEach(parseFrame);
+      if (part.done) break;
+    }
+    if (buffer.trim()) parseFrame(buffer);
+    if (!receivedDone) throw new Error("助手连接已结束，但没有收到完成事件。");
+  }
+
+  function renderAssistant() {
+    clear(assistantRoot); var intro = el("div", "assistant-header"); intro.appendChild(el("p", "eyebrow", "RESEARCHTWIN ASSISTANT")); intro.appendChild(el("h2", "", "ResearchTwin 助手")); intro.appendChild(el("p", "", "短期对话保存在当前会话；长期项目记忆来自 Remote MCP / NAS。")); assistantRoot.appendChild(intro);
+    var chatPanel = panel("对话", "QWEN + REMOTE MCP"); chatPanel.classList.add("assistant-chat-panel"); var transcript = el("div", "chat-transcript");
+    function repaint() {
+      clear(transcript);
+      if (!state.chat.length) transcript.appendChild(el("p", "empty-inline", "请输入问题，助手会根据真实项目数据回答。"));
+      state.chat.forEach(function (item) { var row = el("div", "chat-row " + item.role); row.appendChild(el("div", "chat-role", item.role === "user" ? "你" : "ResearchTwin 助手")); if (item.role === "assistant") row.appendChild(renderMarkdown(item.content || "")); else row.appendChild(el("p", "chat-text", item.content)); if (item.status) row.appendChild(el("p", "chat-loading", item.status)); transcript.appendChild(row); if (item.sources && item.sources.length) { var sources = el("div", "chat-sources"); item.sources.forEach(function (source) { sources.appendChild(el("span", "chat-source", source)); }); transcript.appendChild(sources); } if (item.tools) item.tools.forEach(function (tool) { var card = el("div", "tool-call-card" + (tool.status === "running" ? " is-running" : "")); card.appendChild(el("span", "tool-call-label", tool.status === "running" ? "正在调用" : tool.status === "blocked" ? "已拦截调用" : tool.status === "error" ? "调用失败" : "调用成功")); card.appendChild(el("code", "", tool.label || tool.name)); if (tool.error_code) card.appendChild(el("span", "tool-call-error", tool.error_code)); transcript.appendChild(card); }); });
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    repaint(); chatPanel.appendChild(transcript);
+    var form = el("form", "chat-form"); var input = addField(form, "消息", "message", "textarea", true); input.placeholder = "例如：请告诉我当前项目最重要的下一步是什么，并说明依据。"; var actions = el("div", "chat-actions"); var clearButton = el("button", "button button-secondary", "清空当前本地会话"); clearButton.type = "button"; clearButton.addEventListener("click", function () { if (send.disabled) return; state.chat = []; state.sessionId = null; try { sessionStorage.removeItem("researchtwin-chat-session"); } catch (error) {} chatSessionId(); repaint(); }); var send = el("button", "button button-primary", "发送"); send.type = "submit"; actions.appendChild(clearButton); actions.appendChild(send); form.appendChild(actions); form.addEventListener("submit", async function (event) { event.preventDefault(); var text = input.value.trim(); if (!text || send.disabled) return; state.chat.push({ role: "user", content: text }); var pending = { role: "assistant", content: "", tools: [], sources: [], status: "正在处理…", pending: true }; state.chat.push(pending); input.value = ""; repaint(); send.disabled = true; clearButton.disabled = true; send.textContent = "处理中…"; showMessage("", ""); try { await consumeChatStream({ session_id: chatSessionId(), message: text }, function (eventName, data) { if (eventName === "status") pending.status = data.message || "正在处理…"; if (eventName === "source" && data.name && pending.sources.indexOf(data.name) < 0) pending.sources.push(data.name); if (eventName === "tool") { var existing = pending.tools.length && pending.tools[pending.tools.length - 1]; if (data.status === "running" || !existing || existing.name !== data.name) pending.tools.push({ name: data.name, label: data.name, status: data.status, error_code: data.error_code }); else { existing.status = data.status; existing.error_code = data.error_code; } } if (eventName === "delta") { pending.status = "正在生成回答…"; pending.content += data.text || ""; } if (eventName === "done") { pending.pending = false; pending.status = ""; pending.tools = data.tool_calls || pending.tools; if (data.session_id) state.sessionId = data.session_id; } repaint(); }); } catch (error) { pending.pending = false; pending.status = "处理失败"; showMessage("is-error", error.message, error.detail); if (window.console && window.console.warn) window.console.warn("ResearchTwin chat stream failed", { message: error.message, detail: error.detail || "" }); repaint(); } finally { send.disabled = false; clearButton.disabled = false; send.textContent = "发送"; } }); chatPanel.appendChild(form); assistantRoot.appendChild(chatPanel);
+  }
+
   function renderCandidates(data) {
     clear(root); var intro = el("section", "page-intro"); intro.appendChild(el("p", "eyebrow", "CANDIDATE INTELLIGENCE")); intro.appendChild(el("h2", "section-heading", "候选情报")); intro.appendChild(el("p", "section-description", "Candidate 是待评估的外部情报，不等于正式 Project Knowledge。")); root.appendChild(intro);
     var lifecycle = el("div", "lifecycle"); ["discovered", "shortlisted", "validated", "promoted", "rejected"].forEach(function (s, i) { lifecycle.appendChild(badge(s)); if (i < 3) lifecycle.appendChild(el("span", "lifecycle-arrow", "→")); }); root.appendChild(lifecycle);
@@ -274,6 +325,11 @@
   }
 
   function renderReportResult(resultNode, result) {
+    clear(resultNode); resultNode.className = "write-result is-success"; resultNode.appendChild(el("strong", "", "\u62a5\u544a\u751f\u6210\u6210\u529f"));
+    var safeFields = [["\u72b6\u6001", "status"], ["\u62a5\u544a\u7c7b\u578b", "report_type"], ["\u62a5\u544a\u8def\u5f84", "report_path"], ["\u751f\u6210\u65f6\u95f4", "generated_at"]]; var safeMeta = el("div", "report-result-meta");
+    safeFields.forEach(function (field) { if (result[field[1]] !== undefined && result[field[1]] !== null) { var row = el("div", "report-result-row"); row.appendChild(el("span", "meta-label", field[0])); row.appendChild(el("span", "meta-value", result[field[1]])); safeMeta.appendChild(row); } }); resultNode.appendChild(safeMeta);
+    if (result.report !== undefined && result.report !== null) { resultNode.appendChild(el("h3", "subheading", "\u62a5\u544a\u6b63\u6587")); var value = typeof result.report === "string" ? result.report : ""; var wrap = el("div", "report-markdown-block"); var controls = el("div", "markdown-controls"); var previewButton = el("button", "text-button is-selected", "\u9884\u89c8"); var sourceButton = el("button", "text-button", "\u539f\u6587"); var preview = renderMarkdown(value); var sourceNode = el("pre", "markdown-source", value || "\u6682\u65e0\u62a5\u544a\u6b63\u6587"); function select(mode) { var showPreview = mode === "preview"; preview.hidden = !showPreview; sourceNode.hidden = showPreview; previewButton.classList.toggle("is-selected", showPreview); sourceButton.classList.toggle("is-selected", !showPreview); } previewButton.type = "button"; sourceButton.type = "button"; previewButton.addEventListener("click", function () { select("preview"); }); sourceButton.addEventListener("click", function () { select("source"); }); controls.appendChild(previewButton); controls.appendChild(sourceButton); wrap.appendChild(controls); wrap.appendChild(preview); sourceNode.hidden = true; wrap.appendChild(sourceNode); resultNode.appendChild(wrap); }
+    return;
     clear(resultNode); resultNode.className = "write-result is-success"; resultNode.appendChild(el("strong", "", "报告生成成功"));
     var fields = [["状态", "status"], ["报告类型", "report_type"], ["报告路径", "report_path"], ["生成时间", "generated_at"]]; var meta = el("div", "report-result-meta");
     fields.forEach(function (field) { if (result[field[1]] !== undefined && result[field[1]] !== null) { var row = el("div", "report-result-row"); row.appendChild(el("span", "meta-label", field[0])); row.appendChild(el("span", "meta-value", result[field[1]])); meta.appendChild(row); } }); resultNode.appendChild(meta);
@@ -312,5 +368,6 @@
   function navigate(view) { loadView(view); }
   document.querySelectorAll(".nav-item").forEach(function (item) { item.addEventListener("click", function () { navigate(item.getAttribute("data-view")); }); });
   document.getElementById("refresh-button").addEventListener("click", function () { loadView(state.view); });
+  renderAssistant();
   loadOverview(true);
 }());

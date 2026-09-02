@@ -12,18 +12,31 @@ from types import SimpleNamespace
 import httpx2
 import pytest
 
-from web_demo.app import DemoApplication, aggregate_overview, create_http_server
+from web_demo.app import DemoApplication, _match_persisted_brief, aggregate_overview, create_http_server
+from web_demo.agent import DEFAULT_RAG_TOP_K, MAX_RAG_TOP_K, MAX_SESSION_MESSAGES, ResearchTwinAgent, _compact_tool_result
+from web_demo.rag_client import (
+    LocalVectorConfig,
+    LocalVectorKnowledgeRetriever,
+    OpenTrekKnowledgeConfig,
+    OpenTrekKnowledgeRetriever,
+)
 from web_demo.mcp_client import (
+    ALLOWED_TOOLS,
     RemoteMCPClient,
     RemoteMCPConfig,
     RemoteMCPError,
     parse_mcp_result,
 )
+from web_demo.model_client import ModelClient, ModelConfig
 from web_demo.workflow_adapter import (
     UNAVAILABLE_REASON,
     BailianWorkflowAdapter,
     BailianWorkflowConfig,
     UnavailableWorkflowAdapter,
+)
+from scripts.build_researchtwin_local_index import (
+    DEFAULT_EMBEDDING_BATCH_SIZE,
+    _embed_batch_with_fallback,
 )
 
 
@@ -171,6 +184,62 @@ def test_client_missing_token_timeout_and_redaction(monkeypatch: pytest.MonkeyPa
     with pytest.raises(RemoteMCPError) as redaction_info:
         configured.call_tool("get_research_context", {})
     assert "secret-token" not in redaction_info.value.detail
+
+
+def test_mcp_tools_list_is_cached_after_first_success() -> None:
+    client = RemoteMCPClient(RemoteMCPConfig(token="local-test-token"))
+    calls = 0
+
+    async def list_tools() -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        return [{"name": "get_research_context", "description": "context", "inputSchema": {"type": "object"}}]
+
+    client._list_tools_async = list_tools  # type: ignore[method-assign]
+    assert client.list_tools() == client.list_tools()
+    assert calls == 1
+
+
+def test_agent_session_history_excludes_tool_context_and_is_bounded() -> None:
+    agent = ResearchTwinAgent(AgentMCP(), SequenceModel([]), system_prompt="system")
+    messages: list[dict[str, object]] = []
+    for index in range(12):
+        messages.extend(
+            [
+                {"role": "user", "content": f"question-{index}"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "tool"}]},
+                {"role": "tool", "content": "large raw tool context", "tool_call_id": "tool"},
+                {"role": "assistant", "content": f"answer-{index}"},
+            ]
+        )
+    agent._save_session("bounded", messages)
+    saved = agent._sessions["bounded"]
+    assert MAX_SESSION_MESSAGES == 10
+    assert len(saved) <= MAX_SESSION_MESSAGES
+    assert all(item["role"] in {"user", "assistant"} for item in saved)
+    assert all("tool_calls" not in item for item in saved)
+    assert all("large raw tool context" not in str(item) for item in saved)
+
+
+def test_agent_rag_tool_schema_and_context_result_are_compact() -> None:
+    tools = ResearchTwinAgent._model_tools([])
+    rag = next(item for item in tools if item["function"]["name"] == "retrieve_researchtwin_docs")
+    assert rag["function"]["parameters"]["properties"]["top_k"]["default"] == DEFAULT_RAG_TOP_K
+    assert rag["function"]["parameters"]["properties"]["top_k"]["maximum"] == MAX_RAG_TOP_K
+    compact = _compact_tool_result(
+        "get_research_context",
+        {
+            "status": "success",
+            "research_context": {
+                "recent_activities": [{"title": "x", "description": "d", "internal_id": "hidden"}],
+                "recent_advisor_instructions": [],
+                "project_status": {"project_name": "ResearchTwin", "current_stage": "Demo", "internal": "hidden"},
+            },
+        },
+    )
+    serialized = json.dumps(compact, ensure_ascii=False)
+    assert "internal_id" not in serialized
+    assert "internal" not in serialized
 
 
 def test_overview_keeps_candidate_and_knowledge_separate() -> None:
@@ -461,13 +530,7 @@ def test_workflow_request_uses_prompt_and_biz_params(monkeypatch: pytest.MonkeyP
     adapter = workflow_adapter(
         monkeypatch,
         FakeWorkflowResponse(
-            payload={
-                "output": {
-                    "text": json.dumps(
-                        {"workflow_status": "success", "brief_id": "brief-1", "record_status": "created"}
-                    )
-                }
-            }
+            payload={"output": {"text": json.dumps({"workflow_status": "success"})}}
         ),
     )
     result = adapter.run_research_intelligence(
@@ -494,8 +557,6 @@ def test_workflow_request_uses_prompt_and_biz_params(monkeypatch: pytest.MonkeyP
     }
     assert FakeWorkflowHTTPClient.seen["headers"]["X-DashScope-WorkSpace"] == "workspace-demo"  # type: ignore[index]
     assert result["workflow_status"] == "success"
-    assert result["output"]["brief_id"] == "brief-1"
-    assert result["output"]["record_status"] == "created"
     assert "workflow-secret" not in request["headers"]
 
 
@@ -523,8 +584,6 @@ def test_workflow_success_reads_persisted_brief_after_semantic_success() -> None
                     "title": "Persisted Brief",
                     "executive_summary": "Summary",
                     "brief_markdown": "# Real",
-                    "brief_id": "brief-1",
-                    "record_status": "created",
                 },
             }
 
@@ -539,187 +598,7 @@ def test_workflow_success_reads_persisted_brief_after_semantic_success() -> None
     assert result["workflow_status"] == "success"
     assert result["persisted_match"] is True
     assert result["brief"] == brief
-    assert result["match_strategy"] == "brief_id_exact"
-    assert result["workflow_output"]["record_status"] == "created"
-
-
-def test_workflow_brief_id_missing_does_not_fallback_to_content_match() -> None:
-    class Workflow:
-        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
-            return {
-                "output": {
-                    "workflow_status": "success",
-                    "project_name": "ResearchTwin",
-                    "brief_type": "on_demand",
-                    "title": "Expected",
-                    "brief_markdown": "# Expected",
-                    "brief_id": "new-brief-id",
-                }
-            }
-
-    class Client(FakeClient):
-        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
-            return {
-                "status": "success",
-                "briefs": [
-                    {
-                        "brief_id": "old-brief-id",
-                        "project_name": "ResearchTwin",
-                        "brief_type": "on_demand",
-                        "title": "Expected",
-                        "brief_markdown": "# Expected",
-                    }
-                ],
-            }
-
-    with pytest.raises(RemoteMCPError) as info:
-        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
-            {"query": "q", "brief_type": "on_demand"}
-        )
-    assert info.value.code == "persisted_brief_mismatch"
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("project_name", "OtherProject"), ("brief_type", "daily")],
-)
-def test_workflow_brief_id_match_requires_project_and_type(
-    field: str, value: str
-) -> None:
-    persisted_brief = {
-        "brief_id": "brief-1",
-        "project_name": "ResearchTwin",
-        "brief_type": "on_demand",
-        "title": "Persisted",
-        "brief_markdown": "# Persisted",
-    }
-    persisted_brief[field] = value
-
-    class Workflow:
-        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
-            return {
-                "output": {
-                    "workflow_status": "success",
-                    "project_name": "ResearchTwin",
-                    "brief_type": "on_demand",
-                    "title": "Persisted",
-                    "brief_markdown": "# Persisted",
-                    "brief_id": "brief-1",
-                }
-            }
-
-    class Client(FakeClient):
-        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
-            return {"status": "success", "briefs": [persisted_brief]}
-
-    with pytest.raises(RemoteMCPError) as info:
-        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
-            {"query": "q", "brief_type": "on_demand"}
-        )
-    assert info.value.code == "persisted_brief_mismatch"
-
-
-def test_invalid_record_status_does_not_turn_a_brief_id_match_into_success() -> None:
-    class Workflow:
-        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
-            return {
-                "output": {
-                    "workflow_status": "success",
-                    "project_name": "ResearchTwin",
-                    "brief_type": "on_demand",
-                    "brief_id": "brief-1",
-                    "record_status": None,
-                }
-            }
-
-    class Client(FakeClient):
-        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
-            return {
-                "status": "success",
-                "briefs": [
-                    {
-                        "brief_id": "brief-1",
-                        "project_name": "ResearchTwin",
-                        "brief_type": "on_demand",
-                    }
-                ],
-            }
-
-    with pytest.raises(RemoteMCPError) as info:
-        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
-            {"query": "q", "brief_type": "on_demand"}
-        )
-    assert info.value.code == "persisted_brief_mismatch"
-
-
-def test_legacy_workflow_uses_normalized_unique_fallback() -> None:
-    brief = {
-        "brief_id": "legacy-brief",
-        "project_name": "ResearchTwin",
-        "brief_type": "on_demand",
-        "title": "Legacy Brief",
-        "brief_markdown": "# Heading\nBody\n",
-    }
-
-    class Workflow:
-        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
-            return {
-                "output": {
-                    "workflow_status": "success",
-                    "project_name": "ResearchTwin",
-                    "brief_type": "on_demand",
-                    "title": "\r\nLegacy Brief\r\n",
-                    "brief_markdown": "\r\n# Heading\r\nBody\r\n",
-                }
-            }
-
-    class Client(FakeClient):
-        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
-            return {"status": "success", "briefs": [brief]}
-
-    result = DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
-        {"query": "q", "brief_type": "on_demand"}
-    )
-    assert result["persisted_match"] is True
-    assert result["brief"] == brief
-    assert result["match_strategy"] == (
-        "project_name+brief_type+title+brief_markdown_normalized_fallback"
-    )
-
-
-def test_legacy_workflow_real_markdown_difference_is_not_a_match() -> None:
-    class Workflow:
-        def run_research_intelligence(self, **kwargs: object) -> dict[str, object]:
-            return {
-                "output": {
-                    "workflow_status": "success",
-                    "project_name": "ResearchTwin",
-                    "brief_type": "on_demand",
-                    "title": "Expected",
-                    "brief_markdown": "# Expected\nDifferent body",
-                }
-            }
-
-    class Client(FakeClient):
-        def list_research_intelligence_briefs(self, **filters: object) -> dict[str, object]:
-            return {
-                "status": "success",
-                "briefs": [
-                    {
-                        "brief_id": "brief-1",
-                        "project_name": "ResearchTwin",
-                        "brief_type": "on_demand",
-                        "title": "Expected",
-                        "brief_markdown": "# Expected\nOriginal body",
-                    }
-                ],
-            }
-
-    with pytest.raises(RemoteMCPError) as info:
-        DemoApplication(Client(), project_name="ResearchTwin", workflow=Workflow()).generate_intelligence(
-            {"query": "q", "brief_type": "on_demand"}
-        )
-    assert info.value.code == "persisted_brief_mismatch"
+    assert result["match_strategy"] == "project_name+brief_type+title+brief_markdown_normalized_fallback"
 
 
 def test_workflow_semantic_failure_is_not_treated_as_success() -> None:
@@ -851,6 +730,29 @@ def test_same_type_with_different_title_is_not_a_match() -> None:
     assert info.value.code == "persisted_brief_mismatch"
 
 
+def test_persisted_brief_id_is_authoritative_when_workflow_returns_it() -> None:
+    brief = {"brief_id": "brief-exact", "project_name": "ResearchTwin", "brief_type": "daily", "title": "New"}
+    matched, strategy = _match_persisted_brief(
+        [brief, {"brief_id": "brief-old", "project_name": "ResearchTwin", "brief_type": "daily"}],
+        {"brief_id": "brief-exact", "project_name": "ResearchTwin", "brief_type": "daily"},
+        project_name="ResearchTwin",
+        brief_type="daily",
+    )
+    assert matched == brief
+    assert strategy == "brief_id_exact"
+
+
+def test_persisted_brief_id_mismatch_does_not_fall_back_to_old_record() -> None:
+    matched, strategy = _match_persisted_brief(
+        [{"brief_id": "brief-old", "project_name": "ResearchTwin", "brief_type": "daily", "title": "Old"}],
+        {"brief_id": "brief-new", "project_name": "ResearchTwin", "brief_type": "daily", "title": "Old"},
+        project_name="ResearchTwin",
+        brief_type="daily",
+    )
+    assert matched is None
+    assert strategy is None
+
+
 def test_partial_workflow_output_uses_only_present_identity_fields() -> None:
     brief = {"brief_id": "brief-2", "project_name": "ResearchTwin", "brief_type": "on_demand", "title": "Expected", "brief_markdown": "Persisted body"}
 
@@ -883,3 +785,513 @@ def test_intelligence_ui_separates_current_result_from_history_and_uses_safe_mar
     assert "textContent" in script
     for token in ("#{1,3}", 'el("strong"', 'el("code"', 'el("blockquote"', "document.createElement(ordered ? \"ol\" : \"ul\")"):
         assert token in script
+
+
+def test_agent_exposes_all_sixteen_remote_tools() -> None:
+    assert len(ALLOWED_TOOLS) == 16
+
+
+def test_chat_api_basic_validation_does_not_start_agent() -> None:
+    class ExplodingAgent:
+        def chat(self, **kwargs: object) -> dict[str, object]:
+            raise AssertionError("agent must not run for invalid input")
+
+    application = DemoApplication(FakeClient(), project_name="ResearchTwin", agent=ExplodingAgent())
+    with pytest.raises(RemoteMCPError) as info:
+        application.chat({"message": ""})
+    assert info.value.code == "invalid_request"
+
+
+def test_missing_model_config_is_readable_and_safe() -> None:
+    with pytest.raises(RemoteMCPError) as info:
+        ModelClient(ModelConfig(api_key=None)).chat([], [])
+    assert info.value.code == "model_not_configured"
+    assert "DASHSCOPE_API_KEY" in info.value.message
+
+
+def test_model_client_streams_qwen_sse_with_stream_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def iter_lines(self) -> list[str]:
+            return [
+                "event: message",
+                'data: {"choices":[{"delta":{"content":"真实"}}]}',
+                "",
+                'data: {"choices":[{"delta":{"content":"流式"}}]}',
+                "data: [DONE]",
+            ]
+
+    class FakeHTTP:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "FakeHTTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def stream(self, method: str, url: str, **kwargs: object) -> FakeResponse:
+            assert method == "POST"
+            assert kwargs["json"]["stream"] is True  # type: ignore[index]
+            assert kwargs["json"]["enable_thinking"] is False  # type: ignore[index]
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx2, "Client", FakeHTTP)
+    chunks = list(ModelClient(ModelConfig(api_key="model-secret")).chat_stream([], []))
+    assert chunks[0]["choices"][0]["delta"]["content"] == "真实"
+    assert chunks[1]["choices"][0]["delta"]["content"] == "流式"
+
+
+def test_model_client_disables_thinking_for_non_streaming_chat(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "answer", "tool_calls": []}}], "usage": {"reasoning_tokens": 0}}
+
+    class FakeHTTP:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "FakeHTTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, method: str, **kwargs: object) -> FakeResponse:
+            assert kwargs["json"]["enable_thinking"] is False  # type: ignore[index]
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx2, "Client", FakeHTTP)
+    result = ModelClient(ModelConfig(api_key="model-secret")).chat([], [])
+    assert result["content"] == "answer"
+    output = capsys.readouterr().out
+    assert "reasoning_tokens=0" in output
+    assert "has_reasoning_content=False" in output
+
+
+class AgentMCP:
+    def __init__(self, result: dict[str, object] | None = None, error: RemoteMCPError | None = None) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.result = result or {"status": "success", "value": "real MCP data"}
+        self.error = error
+
+    def list_tools(self) -> list[dict[str, object]]:
+        return [{"name": "get_research_context", "description": "read context", "inputSchema": {"type": "object"}}]
+
+    def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        self.calls.append((name, arguments))
+        if self.error:
+            raise self.error
+        return self.result
+
+
+class SequenceModel:
+    def __init__(self, responses: list[dict[str, object]]) -> None:
+        self.responses = iter(responses)
+        self.calls: list[tuple[list[dict[str, object]], list[dict[str, object]]]] = []
+
+    def chat(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> dict[str, object]:
+        self.calls.append((messages, tools))
+        return next(self.responses)
+
+
+def context_tool_call(call_id: str = "call-1") -> dict[str, object]:
+    return {"id": call_id, "type": "function", "function": {"name": "get_research_context", "arguments": "{}"}}
+
+
+def test_agent_mcp_tool_call_round_trip() -> None:
+    mcp = AgentMCP()
+    model = SequenceModel([{"content": "", "tool_calls": [context_tool_call()]}, {"content": "基于真实项目数据，下一步是继续验证。", "tool_calls": []}])
+    agent = ResearchTwinAgent(mcp, model, system_prompt="Use real project context.")
+    result = agent.chat(session_id="session-a", user_message="当前项目下一步是什么？")
+    assert result["answer"].startswith("基于真实")
+    assert result["tool_calls"][0]["name"] == "get_research_context"
+    assert result["tool_calls"][0]["status"] == "success"
+    assert mcp.calls == [("get_research_context", {})]
+    assert model.calls[0][1][0]["function"]["name"] == "get_research_context"
+    assert model.calls[1][0][-2]["role"] == "tool"
+
+
+def test_agent_supports_multiple_tool_calls_in_one_turn() -> None:
+    mcp = AgentMCP()
+    model = SequenceModel([{"content": "", "tool_calls": [context_tool_call("a"), context_tool_call("b")]}, {"content": "已完成综合回答。", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, system_prompt="system").chat(session_id="s", user_message="请综合回答")
+    assert result["answer"] == "已完成综合回答。"
+    assert len(mcp.calls) == 2
+    assert len(result["tool_calls"]) == 2
+    assert len(model.calls) == 2
+    assert model.calls[1][1] == []
+
+
+def test_agent_perf_summary_reports_one_decision_and_two_model_calls(capsys: pytest.CaptureFixture[str]) -> None:
+    model = SequenceModel(
+        [
+            {"content": "", "tool_calls": [context_tool_call("context")]},
+            {"content": "final answer", "tool_calls": []},
+        ]
+    )
+    ResearchTwinAgent(AgentMCP(), model, system_prompt="system").chat(session_id="perf", user_message="read")
+    output = capsys.readouterr().out
+    assert "model_calls=2" in output
+    assert "tool_decision_rounds=1" in output
+    assert "thinking_enabled=false" in output
+
+
+def test_agent_tool_error_is_returned_to_model_without_traceback() -> None:
+    mcp = AgentMCP(error=RemoteMCPError("mcp_error", "工具调用失败。", detail="safe detail"))
+    model = SequenceModel([{"content": "", "tool_calls": [context_tool_call()]}, {"content": "我无法读取项目上下文。", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, system_prompt="system").chat(session_id="s", user_message="读取项目状态")
+    assert result["tool_calls"][0]["name"] == "get_research_context"
+    assert result["tool_calls"][0]["status"] == "error"
+    assert result["tool_calls"][0]["error_code"] == "mcp_error"
+    assert "Traceback" not in model.calls[1][0][-1]["content"]
+
+
+def test_agent_max_tool_loop_is_bounded() -> None:
+    mcp = AgentMCP()
+    model = SequenceModel([{"content": "", "tool_calls": [context_tool_call(str(i))]} for i in range(6)])
+    with pytest.raises(RemoteMCPError) as info:
+        ResearchTwinAgent(mcp, model, system_prompt="system", max_tool_loops=2).chat(session_id="s", user_message="循环")
+    assert info.value.code == "max_tool_loop"
+    assert len(mcp.calls) == 1
+    assert len(model.calls) == 2
+
+
+def test_agent_blocks_write_without_explicit_authorization() -> None:
+    mcp = AgentMCP()
+    call = {"id": "w", "type": "function", "function": {"name": "record_research_activity", "arguments": json.dumps({"title": "x"})}}
+    model = SequenceModel([{"content": "", "tool_calls": [call]}, {"content": "普通分析不会写入记录。", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, system_prompt="system").chat(session_id="s", user_message="分析一下我今天的工作")
+    assert mcp.calls == []
+    assert result["tool_calls"][0]["status"] == "blocked"
+    assert result["tool_calls"][0]["error_code"] == "write_confirmation_required"
+
+
+def test_agent_allows_explicit_activity_write() -> None:
+    mcp = AgentMCP()
+    call = {"id": "w", "type": "function", "function": {"name": "record_research_activity", "arguments": json.dumps({"title": "完成联调"})}}
+    model = SequenceModel([{"content": "", "tool_calls": [call]}, {"content": "已记录科研活动。", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, system_prompt="system").chat(session_id="s", user_message="我已完成本地联调，请记录为科研活动")
+    assert mcp.calls == [("record_research_activity", {"title": "完成联调"})]
+    assert result["tool_calls"][0]["status"] == "success"
+
+
+def test_agent_session_history_is_isolated() -> None:
+    mcp = AgentMCP()
+    model = SequenceModel([{"content": "回答 A", "tool_calls": []}, {"content": "回答 B", "tool_calls": []}])
+    agent = ResearchTwinAgent(mcp, model, system_prompt="system")
+    agent.chat(session_id="a", user_message="私有问题 A")
+    agent.chat(session_id="b", user_message="私有问题 B")
+    assert "私有问题 A" not in json.dumps(model.calls[1][0], ensure_ascii=False)
+
+
+class FakeRetriever:
+    def __init__(self, result: dict[str, object] | None = None) -> None:
+        self.calls: list[tuple[str, int]] = []
+        self.result = result or {"status": "success", "source": "ResearchTwin_Docs", "results": [{"text": "RNN-PPO source passage"}]}
+
+    def retrieve(self, query: str, *, limit: int = 5) -> dict[str, object]:
+        self.calls.append((query, limit))
+        return self.result
+
+
+def rag_tool_call() -> dict[str, object]:
+    return {
+        "id": "rag-1",
+        "type": "function",
+        "function": {"name": "retrieve_researchtwin_docs", "arguments": json.dumps({"query": "RNN-based PPO", "top_k": 3})},
+    }
+
+
+def test_agent_retrieves_researchtwin_docs_without_mixing_mcp() -> None:
+    mcp = AgentMCP()
+    retriever = FakeRetriever()
+    model = SequenceModel([{"content": "", "tool_calls": [rag_tool_call()]}, {"content": "paper answer", "tool_calls": []}])
+    result = ResearchTwinAgent(mcp, model, retriever=retriever, system_prompt="Use RAG for paper facts.").chat(
+        session_id="rag-session", user_message="Explain the paper design."
+    )
+    assert result["answer"] == "paper answer"
+    assert result["tool_calls"][0]["name"] == "retrieve_researchtwin_docs"
+    assert result["tool_calls"][0]["status"] == "success"
+    assert retriever.calls == [("RNN-based PPO", 3)]
+    assert mcp.calls == []
+    assert any(tool["function"]["name"] == "retrieve_researchtwin_docs" for tool in model.calls[0][1])
+
+
+def test_agent_combines_rag_and_mcp_before_final_synthesis() -> None:
+    mcp = AgentMCP(result={"status": "success", "research_context": {"pending_tasks": ["next task"]}})
+    retriever = FakeRetriever()
+    model = SequenceModel(
+        [
+            {"content": "", "tool_calls": [rag_tool_call(), context_tool_call("context-1")]},
+            {"content": "[论文资料] source; [项目记录] context; [Agent推断] next step", "tool_calls": []},
+        ]
+    )
+    result = ResearchTwinAgent(mcp, model, retriever=retriever, system_prompt="Use both sources.").chat(
+        session_id="combined-session", user_message="Compare the paper and my current project."
+    )
+    assert result["answer"].startswith("[论文资料]")
+    assert [event["name"] for event in result["tool_calls"]] == ["retrieve_researchtwin_docs", "get_research_context"]
+    assert retriever.calls == [("RNN-based PPO", 3)]
+    assert mcp.calls == [("get_research_context", {})]
+
+
+def test_agent_streams_tool_status_and_final_deltas() -> None:
+    mcp = AgentMCP(result={"status": "success", "value": "context"})
+
+    class StreamingModel:
+        def __init__(self) -> None:
+            self.decision = {"role": "assistant", "content": "", "tool_calls": [context_tool_call()]}
+            self.decisions = 0
+
+        def chat(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> dict[str, object]:
+            self.decisions += 1
+            return self.decision if self.decisions == 1 else {"role": "assistant", "content": "", "tool_calls": []}
+
+        def chat_stream(self, messages: list[dict[str, object]], tools: list[dict[str, object]]) -> object:
+            assert tools == []
+            return iter(
+                [
+                    {"choices": [{"delta": {"content": "真实"}}]},
+                    {"choices": [{"delta": {"content": "回答"}}]},
+                    {"choices": []},
+                    {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                ]
+            )
+
+    events = list(ResearchTwinAgent(mcp, StreamingModel(), system_prompt="system").chat_stream(session_id="s", user_message="读取"))
+    assert [event["event"] for event in events] == ["status", "status", "tool", "tool", "delta", "delta", "done"]
+    assert events[-1]["data"]["tool_calls"][0]["name"] == "get_research_context"
+    assert mcp.calls == [("get_research_context", {})]
+
+
+def test_chat_stream_endpoint_returns_sse_frames() -> None:
+    class StreamAgent:
+        def chat_stream(self, **kwargs: object) -> object:
+            return iter(
+                [
+                    {"event": "status", "data": {"message": "正在处理"}},
+                    {"event": "source", "data": {"type": "knowledge", "name": "ResearchTwin_Docs"}},
+                    {"event": "tool", "data": {"name": "get_research_context", "status": "completed"}},
+                    {"event": "delta", "data": {"text": "回答"}},
+                    {"event": "done", "data": {"session_id": "s", "tool_calls": []}},
+                ]
+            )
+
+    application = DemoApplication(FakeClient(), project_name="ResearchTwin", agent=StreamAgent())
+    server = create_http_server(application, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/api/chat/stream"
+        request = urllib.request.Request(url, data=json.dumps({"message": "请分析"}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            body = response.read().decode("utf-8")
+            content_type = response.headers["Content-Type"]
+        assert content_type.startswith("text/event-stream")
+        assert "event: status\ndata:" in body
+        assert "event: source\ndata:" in body
+        assert "event: tool\ndata:" in body
+        assert "event: delta\ndata:" in body
+        assert "event: done\ndata:" in body
+        assert body.endswith("\n\n")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_chat_stream_generator_error_becomes_safe_sse_error(capsys: pytest.CaptureFixture[str]) -> None:
+    class FailingAgent:
+        def chat_stream(self, **kwargs: object) -> object:
+            def events() -> object:
+                yield {"event": "status", "data": {"message": "正在处理"}}
+                raise RemoteMCPError("mcp_error", "项目记录暂时无法读取。", detail="stage=mcp; Bearer secret-token")
+
+            return events()
+
+    application = DemoApplication(FakeClient(), project_name="ResearchTwin", agent=FailingAgent())
+    server = create_http_server(application, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/api/chat/stream"
+        request = urllib.request.Request(url, data=json.dumps({"message": "请读取"}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            body = response.read().decode("utf-8")
+        assert "event: error\ndata:" in body
+        assert "mcp_error" in body
+        assert "secret-token" not in body
+        diagnostic = capsys.readouterr().err
+        assert "stage=mcp" in diagnostic
+        assert "secret-token" not in diagnostic
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_local_retrieval_missing_index_is_safe() -> None:
+    config = LocalVectorConfig.from_env({"RESEARCHTWIN_LOCAL_RAG_INDEX": "missing.json"})
+    retriever = LocalVectorKnowledgeRetriever(config, embedder=object())
+    with pytest.raises(RemoteMCPError) as info:
+        retriever.retrieve("paper question")
+    assert info.value.code == "retriever_unavailable"
+
+
+def test_opentrek_retrieval_parses_chunk_representation() -> None:
+    class FakeHTTP:
+        def post(self, url: str, *, json: dict[str, object], headers: dict[str, str]) -> object:
+            assert url.endswith("/retrieve")
+            assert json["kbIndexRetrieveFieldName"] == "chunk_representation"
+            assert json["limit"] == 3
+            assert headers["x-sfm-workspacecode"] == "workspace"
+            return SimpleNamespace(
+                status_code=200,
+                json=lambda: {"data": {"chunks": [{"chunk_representation": "paper passage", "score": 0.9, "chunk_id": "c1"}]}},
+            )
+
+    config = OpenTrekKnowledgeConfig(
+        app_key="opentrek-secret",
+        url="http://opentrek.test/retrieve",
+        workspace_code="workspace",
+        index_code="index",
+    )
+    result = OpenTrekKnowledgeRetriever(config, http_client=FakeHTTP()).retrieve("paper question", limit=3)
+    assert result == {
+        "status": "success",
+        "source": "ResearchTwin_Docs",
+        "provider": "opentrek",
+        "results": [{"source": "ResearchTwin_Docs", "provider": "opentrek", "text": "paper passage", "score": 0.9, "chunk_id": "c1"}],
+    }
+
+
+def test_local_vector_retrieval_ranks_cosine_similarity(tmp_path: Path) -> None:
+    index = tmp_path / "index.json"
+    index.write_text(
+        json.dumps(
+            {
+                "chunks": [
+                    {"document_name": "paper.pdf", "chunk_id": "best", "page": 1, "text": "best", "embedding": [1.0, 0.0]},
+                    {"document_name": "paper.pdf", "chunk_id": "other", "page": 2, "text": "other", "embedding": [0.0, 1.0]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeEmbedder:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            assert texts == ["query"]
+            return [[1.0, 0.0]]
+
+    result = LocalVectorKnowledgeRetriever(LocalVectorConfig(index), embedder=FakeEmbedder()).retrieve("query", limit=1)
+    assert result["provider"] == "local"
+    assert result["results"][0]["chunk_id"] == "best"
+    assert result["results"][0]["score"] == 1.0
+
+
+def test_local_index_embedding_batch_size_is_at_most_eight() -> None:
+    assert DEFAULT_EMBEDDING_BATCH_SIZE == 8
+
+
+def test_local_index_embedding_batch_splits_on_http_400() -> None:
+    class SplittingEmbedder:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            self.calls.append(len(texts))
+            if len(texts) > 2:
+                raise RemoteMCPError("retriever_unavailable", "embedding failed", detail="Embedding API returned HTTP 400.")
+            return [[float(index)] for index, _ in enumerate(texts)]
+
+    embedder = SplittingEmbedder()
+    vectors = _embed_batch_with_fallback(embedder, [str(index) for index in range(8)])
+
+    assert len(vectors) == 8
+    assert embedder.calls == [8, 4, 2, 2, 4, 2, 2]
+
+
+def test_local_index_embedding_single_item_http_400_still_raises() -> None:
+    class PermanentlyFailingEmbedder:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            assert len(texts) == 1
+            raise RemoteMCPError("retriever_unavailable", "embedding failed", detail="Embedding API returned HTTP 400.")
+
+    embedder = PermanentlyFailingEmbedder()
+    with pytest.raises(RemoteMCPError):
+        _embed_batch_with_fallback(embedder, ["one"])
+    assert embedder.calls == 1
+
+
+def test_opentrek_timeout_degrades_to_retriever_unavailable() -> None:
+    class TimeoutHTTP:
+        def post(self, *args: object, **kwargs: object) -> object:
+            raise TimeoutError("opentrek timed out")
+
+    config = OpenTrekKnowledgeConfig(
+        app_key="opentrek-secret",
+        url="http://opentrek.test/retrieve",
+        workspace_code="workspace",
+        index_code="index",
+    )
+    with pytest.raises(RemoteMCPError) as info:
+        OpenTrekKnowledgeRetriever(config, http_client=TimeoutHTTP()).retrieve("paper question")
+    assert info.value.code == "retriever_unavailable"
+    assert "opentrek-secret" not in info.value.detail
+
+
+def test_model_error_redacts_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingHTTP:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "FailingHTTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, *args: object, **kwargs: object) -> object:
+            raise RuntimeError("Bearer model-secret-value")
+
+    monkeypatch.setattr(httpx2, "Client", FailingHTTP)
+    with pytest.raises(RemoteMCPError) as info:
+        ModelClient(ModelConfig(api_key="model-secret-value")).chat([], [])
+    assert "model-secret-value" not in info.value.detail
+
+
+def test_assistant_ui_has_no_secret_channel_and_uses_safe_markdown() -> None:
+    static = Path(__file__).resolve().parents[1] / "web_demo" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    script = (static / "app.js").read_text(encoding="utf-8")
+    assert "ResearchTwin 助手" in html
+    assert "assistant-root" in html
+    assert 'data-view="assistant"' not in html
+    assert "/api/chat" in script
+    assert "/api/chat/stream" in script
+    assert "getReader" in script
+    assert "EventSource" not in script
+    assert "sessionStorage" in script
+    assert "innerHTML" not in script
+    assert "renderMarkdown" in script
+    assert "Authorization" not in html + script
